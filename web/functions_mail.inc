@@ -177,7 +177,7 @@ function get_address_list($array)
   for ($i=0; $i < count($array); $i++)
   {
     $array[$i] = trim($array[$i]);
-    if ($array[$i] != '')
+    if ($array[$i] !== '')
     {
       $trimmed_array[] = $array[$i];
     }
@@ -357,13 +357,16 @@ function create_date_list($dates, $as_html)
 
 
 // Generate a list of repeat dates for a series
-function create_repeat_list($data, $action, $as_html)
+//
+// $reps is an array of start_times that have been created/modified/deleted.
+function create_repeat_list($data, $action, $as_html, $reps)
 {
   global $max_rep_entrys;
   
-  if ($data['rep_type'] == REP_NONE)
+  if (($data['rep_type'] == REP_NONE) ||
+       in_array($action, array('more_info', 'remind')))
   {
-    return;
+    return '';
   }
 
   // The introductory text
@@ -378,19 +381,15 @@ function create_repeat_list($data, $action, $as_html)
   }
   $result .= ($as_html) ? "</p>\n" : "\n\n";
   
-  $reps = mrbsGetRepeatEntryList($data['start_time'], 
-                                 $data['end_date'],
-                                 $data['rep_type'], 
-                                 $data['rep_opt'],
-                                 $data['rep_num_weeks'],
-                                 $max_rep_entrys);
-  
-  // Remove any dates that could not be booked due to conflicts                               
-  if (!empty($data['skip_list']))
+  $rep_details = array();
+  foreach (array('rep_type', 'rep_opt', 'rep_num_weeks', 'month_absolute', 'month_relative') as $key)
   {
-    $reps = array_diff($reps, $data['skip_list']);
+    if (isset($data[$key]))
+    {
+      $rep_details[$key] = $data[$key];
+    }
   }
-                                                         
+  
   $result .= create_date_list($reps, $as_html);
   
   // Now add in the list of repeat bookings that could not be booked
@@ -408,7 +407,9 @@ function create_repeat_list($data, $action, $as_html)
 }
 
 
-function create_body($data, $mail_previous, $compare, $series, $action, $as_html=FALSE, $note='')
+// $start_times is an array of start_times that have been created/modified/deleted.
+// If not specified the function works them out for itself from the repeat data
+function create_body($data, $mail_previous, $compare, $series, $action, $as_html=FALSE, $note='', $start_times)
 {
   global $returl, $mrbs_company;
   global $enable_periods, $approval_enabled, $confirmation_enabled;
@@ -497,7 +498,7 @@ function create_body($data, $mail_previous, $compare, $series, $action, $as_html
     $body .= ($as_html) ? "</p><p>" : "\n\n";
     $body .= ($as_html) ? "<a target=\"_blank\" href=\"" : "";
     // Set the link to view entry page
-    if (isset($url_base) && ($url_base != ""))
+    if (isset($url_base) && ($url_base !== ''))
     {
       $body .= "$url_base/view_entry.php?id=" . $data['id'];
     }
@@ -668,20 +669,19 @@ function create_body($data, $mail_previous, $compare, $series, $action, $as_html
     // Details if a series
     if ($data['rep_type'] != REP_NONE)
     {     
-      // Repeat number of weeks
-      if ($data['rep_type'] == REP_N_WEEKLY)
-      {
       
+      if ($data['rep_type'] == REP_WEEKLY)
+      {
+        // Repeat number of weeks
+        $new = $data['rep_num_weeks'] . ' ' .
+               (($data['rep_num_weeks'] == 1) ? get_vocab("week_lc") : get_vocab("weeks"));
+        $old = $mail_previous['rep_num_weeks'] . ' ' .
+               (($mail_previous['rep_num_weeks'] == 1) ? get_vocab("week_lc") : get_vocab("weeks"));
         $body .= create_body_table_row (get_mail_vocab("rep_num_weeks"),
-                                        $data['rep_num_weeks'],
-                                        $mail_previous["rep_num_weeks"],
+                                        $new,
+                                        $old,
                                         $compare, $as_html);
-      }
-      
-      // Repeat days
-      if (($data['rep_type'] == REP_WEEKLY) || ($data['rep_type'] == REP_N_WEEKLY))
-      {
-      
+        // Repeat days
         // Display day names according to language and preferred weekday start.
         $opt = get_rep_day_list($data['rep_opt']);
         $opt_previous = ($compare) ? get_rep_day_list($mail_previous['rep_opt']) : "";
@@ -691,10 +691,55 @@ function create_body($data, $mail_previous, $compare, $series, $action, $as_html
                                         $compare, $as_html);
       }
       
+      if ($data['rep_type'] == REP_MONTHLY)
+      {
+      
+        if (isset($data['month_absolute']))
+        {
+          $new = $data['month_absolute'];
+        }
+        elseif (isset($data['month_relative']))
+        {
+          // Note: this does not internationalise very well and could do with revisiting.
+          // It follows the select box order in edit_entry, which is the more difficult one
+          // to sort out.  It assumes all languages have the same order as English
+          // eg "the second Wednesday" which is probably not true.
+          list($ord, $dow) = byday_split($data['month_relative']);
+          $new = get_vocab("ord_" . $ord) . " " . day_name(RFC_5545_day_to_ord($dow));
+        }
+        else
+        {
+          trigger_error("Unknown monthly repeat type, E_USER_NOTICE");
+        }
+        if (isset($mail_previous['month_absolute']))
+        {
+          $old = $mail_previous['month_absolute'];
+        }
+        elseif (isset($mail_previous['month_relative']))
+        {
+          // Note: this does not internationalise very well and could do with revisiting.
+          // It follows the select box order in edit_entry, which is the more difficult one
+          // to sort out.  It assumes all languages have the same order as English
+          // eg "the second Wednesday" which is probably not true.
+          list($ord, $dow) = byday_split($mail_previous['month_relative']);
+          $old = get_vocab("ord_" . $ord) . " " . day_name(RFC_5545_day_to_ord($dow));
+        }
+        else
+        {
+          trigger_error("Unknown monthly repeat type, E_USER_NOTICE");
+        }
+        $body .= create_body_table_row (get_mail_vocab("repeat_on"),
+                                        $new,
+                                        $old,
+                                        $compare, $as_html);
+      
+      }
+
       // Repeat end date
+      $end_previous = ($mail_previous['rep_type'] == REP_NONE) ? '' : getMailTimeDateString($mail_previous['end_date'], FALSE);
       $body .= create_body_table_row (get_mail_vocab("rep_end_date"),
                                       getMailTimeDateString($data['end_date'], FALSE),
-                                      getMailTimeDateString($mail_previous['end_date'], FALSE),
+                                      $end_previous,
                                       $compare, $as_html);
                                                                    
     }
@@ -706,13 +751,13 @@ function create_body($data, $mail_previous, $compare, $series, $action, $as_html
     $body .= "</table>\n";
   }
   
-  // Add in a list of repeat dates.  Although we've given them the repeat charateristics
+  // Add in a list of repeat dates.  Although we've given them the repeat characteristics
   // above, it's often helpful to have this expanded out into a list of actual dates to
   // avoid any confusion.    The repeat list also gives a list of dates that could not
   // be booked due to conflicts.
   if ($data['rep_type'] != REP_NONE)
   {
-    $body .= create_repeat_list($data, $action, $as_html);
+    $body .= create_repeat_list($data, $action, $as_html, $start_times);
   }
   
   if ($as_html)
@@ -845,11 +890,12 @@ function create_addresses($data, $action)
  * @param array   $mail_previous contains the data for the previous entry, or is an empty array
  * @param bool    $new_entry     whether this is a new entry or not
  * @param bool    $series        whether this is a series or not
+ * @param   array $start_times   an array of start times that have been made
  * @param string  $action        the booking action (eg "delete", "more_info", etc.)
  * @param string  $note          a note that is used with "more_info"
  * @return bool                  TRUE or PEAR error object if fails
  */
-function notifyAdminOnBooking($data, $mail_previous, $new_entry, $series, $action="book", $note='')
+function notifyAdminOnBooking($data, $mail_previous, $new_entry, $series, $start_times, $action="book", $note='')
 {
   global $mail_settings, $enable_periods;
   
@@ -916,13 +962,13 @@ function notifyAdminOnBooking($data, $mail_previous, $new_entry, $series, $actio
   // Create the text body
   $compare = !$new_entry;
   $text_body = array();
-  $text_body['content'] = create_body($data, $mail_previous, $compare, $series, $action, FALSE, $note);
+  $text_body['content'] = create_body($data, $mail_previous, $compare, $series, $action, FALSE, $note, $start_times);
   
   // Create the HTML body
   $html_body = array();
   if ($mail_settings['html'])
   {
-    $html_body['content'] = create_body($data, $mail_previous, $compare, $series, $action, TRUE, $note);
+    $html_body['content'] = create_body($data, $mail_previous, $compare, $series, $action, TRUE, $note, $start_times);
     $html_body['cid'] = generate_global_uid("html");
   }
   
@@ -954,11 +1000,12 @@ function notifyAdminOnBooking($data, $mail_previous, $new_entry, $series, $actio
  *
  * @param   array   $data      contains deleted entry data for email body
  * @param   bool    $series    whether this is a series or not
+ * @param   array   $start_times an array of start times that have been deleted
  * @param   string  $action    the booking action (eg "delete", "more_info", etc.)
  * @param   string  $note      a note that is used with "reject"
  * @return  bool    TRUE or PEAR error object if fails
  */
-function notifyAdminOnDelete($data, $series=FALSE, $action="delete", $note="")
+function notifyAdminOnDelete($data, $series=FALSE, $start_times, $action="delete", $note="")
 {
   global $mail_settings, $enable_periods;
   
@@ -1004,13 +1051,13 @@ function notifyAdminOnDelete($data, $series=FALSE, $action="delete", $note="")
   
   // Create the text body
   $text_body = array();
-  $text_body['content'] = create_body($data, NULL, FALSE, $series, $action, FALSE, $note);
+  $text_body['content'] = create_body($data, NULL, FALSE, $series, $action, FALSE, $note, $start_times);
   
   // Create the HTML body
   $html_body = array();
   if ($mail_settings['html'])
   {
-    $html_body['content'] = create_body($data, NULL, FALSE, $series, $action, TRUE, $note);
+    $html_body['content'] = create_body($data, NULL, FALSE, $series, $action, TRUE, $note, $start_times);
     $html_body['cid'] = generate_global_uid("html");
   }
   
@@ -1132,6 +1179,7 @@ function sendMail($addresses, $subject, $text_body, $html_body, $attachment, $ch
   // Headers part (extra headers - the standard headers will already be there)
   $headers = array();
   $headers['From'] = $addresses['from'];
+  $headers['Auto-Submitted'] = 'auto-generated';
   if ($backend != 'mail')
   {
     $headers['To'] = $addresses['to'];

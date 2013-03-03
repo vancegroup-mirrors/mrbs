@@ -4,6 +4,324 @@
 require "defaultincludes.inc";
 
 
+function generate_search_criteria(&$vars)
+{
+  global $booking_types, $select_options;
+  global $private_somewhere, $approval_somewhere, $confirmation_somewhere;
+  global $user_level, $tbl_entry, $tbl_area, $tbl_room;
+  global $field_natures, $field_lengths;
+  global $report_search_field_order;
+  
+  echo "<fieldset>\n";
+  echo "<legend>" . get_vocab("search_criteria") . "</legend>\n";
+  
+  foreach ($report_search_field_order as $key)
+  {
+    switch ($key)
+    {
+      case 'report_start':
+        echo "<div id=\"div_report_start\">\n";
+        echo "<label>" . get_vocab("report_start") . ":</label>\n";
+        genDateSelector("from_", $vars['from_day'], $vars['from_month'], $vars['from_year']);
+        echo "</div>\n";
+        break;
+      
+        
+      case 'report_end':  
+        echo "<div id=\"div_report_end\">\n";
+        echo "<label>" . get_vocab("report_end") . ":</label>\n";
+        genDateSelector("to_", $vars['to_day'], $vars['to_month'], $vars['to_year']);
+        echo "</div>\n";
+        break;
+      
+        
+      case 'areamatch':
+        $options = sql_query_array("SELECT area_name FROM $tbl_area ORDER BY area_name");
+        if ($options === FALSE)
+        {
+          trigger_error(sql_error(), E_USER_WARNING);
+          fatal_error(FALSE, get_vocab("fatal_db_error"));
+        }
+        echo "<div id=\"div_areamatch\">\n";
+        $params = array('label'         => get_vocab("match_area") . ':',
+                        'name'          => 'areamatch',
+                        'options'       => $options,
+                        'force_indexed' => TRUE,
+                        'value'         => $vars['areamatch']);
+        generate_datalist($params);
+        echo "</div>\n";
+        break;
+        
+        
+      case 'roommatch':
+        // (We need DISTINCT because it's possible to have two rooms of the same name
+        // in different areas)
+        $options = sql_query_array("SELECT DISTINCT room_name FROM $tbl_room ORDER BY room_name");
+        if ($options === FALSE)
+        {
+          trigger_error(sql_error(), E_USER_WARNING);
+          fatal_error(FALSE, get_vocab("fatal_db_error"));
+        }
+        echo "<div id=\"div_roommatch\">\n";
+        $params = array('label'         => get_vocab("match_room") . ':',
+                        'name'          => 'roommatch',
+                        'options'       => $options,
+                        'force_indexed' => TRUE,
+                        'value'         => $vars['roommatch']);
+        generate_datalist($params);
+        echo "</div>\n";
+        break;
+      
+        
+      case 'typematch':  
+        echo "<div id=\"div_typematch\">\n";
+        $options = array();
+        foreach ($booking_types as $type)
+        {
+          $options[$type] = get_type_vocab($type);
+        }
+        $params = array('label'        => get_vocab("match_type") . ':',
+                        'name'         => 'typematch[]',
+                        'id'           => 'typematch',
+                        'options'      => $options,
+                        'force_assoc'  => TRUE,  // in case the type keys happen to be digits
+                        'value'        => $vars['typematch'],
+                        'multiple'     => TRUE,
+                        'attributes'   => 'size="5"');
+        generate_select($params);
+        echo "<span>" . get_vocab("ctrl_click_type") . "</span>\n";
+        echo "</div>\n";
+        break;
+      
+        
+      case 'namematch':  
+        echo "<div id=\"div_namematch\">\n";
+        $params = array('label' => get_vocab("match_entry") . ':',
+                        'name'  => 'namematch',
+                        'value' => $vars['namematch']);
+        generate_input($params);
+        echo "</div>\n";
+        break;
+      
+        
+      case 'descrmatch':
+        echo "<div id=\"div_descrmatch\">\n";
+        $params = array('label' => get_vocab("match_descr") . ':',
+                        'name'  => 'descrmatch',
+                        'value' => $vars['descrmatch']);
+        generate_input($params);
+        echo "</div>\n";
+        break;
+  
+      
+      case 'creatormatch':
+        echo "<div id=\"div_creatormatch\">\n";
+        $params = array('label' => get_vocab("createdby") . ':',
+                        'name'  => 'creatormatch',
+                        'value' => $vars['creatormatch']);
+        generate_input($params);
+        echo "</div>\n";
+        break;
+        
+
+      case 'match_private':
+        // Privacy status
+        // Only show this part of the form if there are areas that allow private bookings
+        if ($private_somewhere)
+        {
+          // If they're not logged in then there's no point in showing this part of the form because
+          // they'll only be able to see public bookings anyway (and we don't want to alert them to
+          // the existence of private bookings)
+          if (empty($user_level))
+          {
+            echo "<input type=\"hidden\" name=\"match_private\" value=\"" . PRIVATE_NO . "\">\n";
+          }
+          // Otherwise give them the radio buttons
+          else
+          {
+            echo "<div id=\"div_privacystatus\">\n";
+            $options = array(PRIVATE_BOTH => get_vocab("both"), PRIVATE_NO => get_vocab("default_public"), PRIVATE_YES => get_vocab("default_private"));
+            $params = array('label'   => get_vocab("privacy_status") . ':',
+                            'name'    => 'match_private',
+                            'options' => $options,
+                            'value'   => $vars['match_private']);
+            generate_radio_group($params);
+            echo "</div>\n";
+          }
+        }
+        break;
+        
+      
+      case 'match_confirmed':
+        // Confirmation status
+        // Only show this part of the form if there are areas that require approval
+        if ($confirmation_somewhere)
+        {
+          echo "<div id=\"div_confirmationstatus\">\n";
+          $options = array(CONFIRMED_BOTH => get_vocab("both"), CONFIRMED_YES => get_vocab("confirmed"), CONFIRMED_NO => get_vocab("tentative"));
+          $params = array('label'   => get_vocab("confirmation_status") . ':',
+                          'name'    => 'match_confirmed',
+                          'options' => $options,
+                          'value'   => $vars['match_confirmed']);
+          generate_radio_group($params);
+          echo "</div>\n";
+        }
+        break;
+        
+        
+      case 'match_approved':
+        // Approval status
+        // Only show this part of the form if there are areas that require approval
+        if ($approval_somewhere)
+        {
+          echo "<div id=\"div_approvalstatus\">\n";
+          $options = array(APPROVED_BOTH => get_vocab("both"), APPROVED_YES => get_vocab("approved"), APPROVED_NO => get_vocab("awaiting_approval"));
+          $params = array('label'   => get_vocab("approval_status") . ':',
+                          'name'    => 'match_approved',
+                          'options' => $options,
+                          'value'   => $vars['match_approved']);
+          generate_radio_group($params);
+          echo "</div>\n";
+        }
+        break;
+        
+
+      default:
+        // Must be a custom field
+        $var = "match_$key";
+        global $$var;
+        $params = array('label' => get_loc_field_name($tbl_entry, $key) . ':',
+                        'name'  => $var,
+                        'value' => isset($$var) ? $$var : NULL);
+        echo "<div>\n";
+        // Output a checkbox if it's a boolean or integer <= 2 bytes (which we will
+        // assume are intended to be booleans)
+        if (($field_natures[$key] == 'boolean') || 
+            (($field_natures[$key] == 'integer') && isset($field_lengths[$key]) && ($field_lengths[$key] <= 2)) )
+        {
+          generate_checkbox($params);
+        }
+        // Otherwise output a text input
+        else
+        {
+          // If $select_options is defined we want to force a <datalist> and not a
+          // <select>.  That's because if we have options such as
+          // ('tea', 'white coffee', 'black coffee') we want the user to be able to type
+          // 'coffee' which will match both 'white coffee' and 'black coffee'.
+          if (isset($select_options["entry.$key"]) && !empty($select_options["entry.$key"]))
+          {
+            $params['options'] = $select_options["entry.$key"];
+            // We force the values to be used and not the keys.   We will convert
+            // back to values when we construct the SQL query.
+            $params['force_indexed'] = TRUE;
+            generate_datalist($params);
+          }
+          else
+          {
+            $params['field'] = "entry.$key";
+            generate_input($params);
+          }
+        }
+        echo "</div>\n";
+        break;
+        
+    } // switch
+    
+  }
+
+  echo "</fieldset>\n";
+}
+
+
+function generate_presentation_options(&$vars)
+{
+  global $times_somewhere, $report_presentation_field_order;
+  
+  echo "<fieldset>\n";
+  echo "<legend>" . get_vocab("presentation_options") . "</legend>\n";
+
+  foreach ($report_presentation_field_order as $key)
+  {
+    switch ($key)
+    {
+      case 'output':
+        echo "<div id=\"div_output\">\n";
+        $buttons = array(REPORT  => get_vocab('report'),
+                         SUMMARY => get_vocab('summary'));
+        $params = array('label'   => get_vocab('output') . ":",
+                        'name'    => 'output',
+                        'value'   => $vars['output'],
+                        'options' => $buttons);
+        generate_radio_group($params);                  
+        echo "</div>\n";
+        break;
+        
+        
+      case 'output_format':
+        echo "<div id=\"div_format\">\n";
+        $buttons = array(OUTPUT_HTML => get_vocab('html'),
+                         OUTPUT_CSV  => get_vocab('csv'));
+        // The iCal output button
+        if ($times_somewhere) // We can't do iCalendars for periods yet
+        {
+          $buttons[OUTPUT_ICAL] = "ical";
+        }
+        $params = array('label'   => get_vocab('format') . ":",
+                        'name'    => 'output_format',
+                        'value'   => $vars['output_format'],
+                        'options' => $buttons);
+        generate_radio_group($params);
+        echo "</div>\n";
+        break;
+        
+
+      case 'sortby':
+        echo "<div id=\"div_sortby\">\n";
+        $options = array('r' => get_vocab("sort_room"),
+                         's' => get_vocab("sort_rep_time"));
+        $params = array('label'   => get_vocab("sort_rep") . ':',
+                        'name'    => 'sortby',
+                        'options' => $options,
+                        'value'   => $vars['sortby']);
+        generate_radio_group($params);
+        echo "</div>\n";
+        break;
+
+        
+      case 'sumby':
+        echo "<div id=\"div_sumby\">\n";
+        $options = array('d' => get_vocab("sum_by_descrip"),
+                         'c' => get_vocab("sum_by_creator"),
+                         't' => get_vocab("sum_by_type"));
+        $params = array('label'   => get_vocab("summarize_by") . ':',
+                        'name'    => 'sumby',
+                        'options' => $options,
+                        'value'   => $vars['sumby']);
+        generate_radio_group($params);
+        echo "</div>\n";
+        break;
+        
+      
+      default:
+        break;  
+      
+    }  // switch
+   
+  }  // foreach   
+  
+  echo "</fieldset>\n";
+}
+
+
+function generate_submit_buttons()
+{
+  echo "<div id=\"report_submit\">\n";
+  echo "<input type=\"hidden\" name=\"phase\" value=\"2\">\n";
+  echo "<input class=\"submit\" type=\"submit\" value=\"" . get_vocab("submitquery") . "\">\n";
+  echo "</div>\n";
+}
+
+
 // Converts a string from the standard MRBS character set to the character set
 // to be used for CSV files
 function csv_conv($string)
@@ -50,6 +368,22 @@ function escape($string)
 }
 
 
+// Wraps $string in a span with a data-stype value of $stype - but only for HTML output
+function stype_wrap($string, $stype)
+{
+  global $output_format;
+  
+  if ($output_format == OUTPUT_HTML)
+  {
+    return '<span class="normal" data-stype="title-numeric">' . $string . '</span>';
+  }
+  else
+  {
+    return $string;
+  }
+}
+
+
 // Output the first row (header row) for CSV reports
 function report_header()
 {
@@ -69,6 +403,7 @@ function report_header()
   
   foreach ($field_order_list as $field)
   {
+    // We give some columns an stype data value so that the JavaScript knows how to sort them
     switch ($field)
     {
       case 'name':
@@ -81,11 +416,11 @@ function report_header()
         $values[] = get_vocab("room");
         break;
       case 'start_time':
-        $values[] = get_vocab("start_date");
+        $values[] = stype_wrap(get_vocab("start_date"), 'title-numeric');
         break;
       case 'end_time':
-        $values[] = get_vocab("end_date");
-        $values[] = get_vocab("duration");
+        $values[] = stype_wrap(get_vocab("end_date"), 'title-numeric');
+        $values[] = stype_wrap(get_vocab("duration"), 'title-numeric');
         break;
       case 'description':
         $values[] = get_vocab("fulldescription_short");
@@ -109,7 +444,7 @@ function report_header()
         }
         break;
       case 'last_updated':
-        $values[] = get_vocab("lastupdate");
+        $values[] = stype_wrap(get_vocab("lastupdate"), 'title-numeric');
         break;
       default:
         // the custom fields
@@ -301,7 +636,7 @@ function output_foot_rows(&$rows, $format)
 }
 
 
-function report_row(&$rows, &$data, $sortby)
+function report_row(&$rows, &$data)
 {
   global $output_format, $ajax, $ajax_capable;
   global $csv_row_sep, $csv_col_sep;
@@ -398,7 +733,7 @@ function report_row(&$rows, &$data, $sortby)
             if (isset($select_options["entry.$field"]) &&
                 is_assoc($select_options["entry.$field"]) && 
                 array_key_exists($value, $select_options["entry.$field"]) &&
-                ($value != ''))
+                ($value !== ''))
             {
               $value = $select_options["entry.$field"][$value];
             }
@@ -418,8 +753,10 @@ function report_row(&$rows, &$data, $sortby)
       switch ($field)
       {
         case 'name':
-          // Add a link to the entry
-          $value = "<a href=\"view_entry.php?id=" . $data['id'] . "\" title=\"$value\">$value</a>";
+          // Add a link to the entry and also a data-id value for the Bulk Delete JavaScript
+          $value = "<a href=\"view_entry.php?id=" . $data['id'] . "\"" .
+                   " data-id=\"" . $data['id'] . "\"" .
+                   " title=\"$value\">$value</a>";
           break;
         case 'end_time':
           // Process the duration and then fall through to the end_time
@@ -492,7 +829,7 @@ function increment_count(&$array, $index1, $index2, $increment)
   $array[$index1][$index2] += $increment;
 }
 
-// Collect summary statistics on one entry. See below for columns in $row[].
+// Collect summary statistics on one entry.
 // This also builds hash tables of all unique names and rooms. When sorted,
 // these will become the column and row headers of the summary table.
 function accumulate(&$row, &$count, &$hours, $report_start, $report_end,
@@ -516,13 +853,13 @@ function accumulate(&$row, &$count, &$hours, $report_start, $report_end,
   {
     $dur = (min((int)$row['end_time'], $report_end) - 
             max((int)$row['start_time'], $report_start)) / 60;
-    $increment = ($dur % $max_periods) + floor( $dur/(24*60) ) * $max_periods;
+    $increment = ($dur % $max_periods) + floor($dur/MINUTES_PER_DAY) * $max_periods;
     $room_hash[$room] = MODE_PERIODS;
   }
   else
   {
     $increment = (min((int)$row['end_time'], $report_end) -
-                  max((int)$row['start_time'], $report_start)) / 3600.0;
+                  max((int)$row['start_time'], $report_start)) / SECONDS_PER_HOUR;
     $room_hash[$room] = MODE_TIMES;
   }
   increment_count($hours, $room, $name, $increment);
@@ -773,6 +1110,32 @@ $confirmation_somewhere = some_area('confirmation_enabled');
 $times_somewhere = (sql_query1("SELECT COUNT(*) FROM $tbl_area WHERE enable_periods=0") > 0);
 $periods_somewhere = (sql_query1("SELECT COUNT(*) FROM $tbl_area WHERE enable_periods!=0") > 0);
 
+
+// Build the report search field order
+$report_presentation_fields = array('output', 'output_format', 'sortby', 'sumby');
+
+foreach ($report_presentation_fields as $field)
+{
+  if (!in_array($field, $report_presentation_field_order))
+  {
+    $report_presentation_field_order[] = $field;
+  }
+}
+
+// Build the report search field order
+$report_search_fields = array('report_start', 'report_end',
+                              'areamatch', 'roommatch',
+                              'typematch', 'namematch', 'descrmatch', 'creatormatch',
+                              'match_private', 'match_confirmed', 'match_approved');
+  
+foreach ($report_search_fields as $field)
+{
+  if (!in_array($field, $report_search_field_order))
+  {
+    $report_search_field_order[] = $field;
+  }
+}
+  
 // Get information about custom fields
 $fields = sql_field_info($tbl_entry);
 $custom_fields = array();
@@ -780,12 +1143,19 @@ $field_natures = array();
 $field_lengths = array();
 foreach ($fields as $field)
 {
-  if (!in_array($field['name'], $standard_fields['entry']))
+  $key = $field['name'];
+  if (!in_array($key, $standard_fields['entry']))
   {
-    $custom_fields[$field['name']] = '';
+    $custom_fields[$key] = '';
+    // Add the field to the end of the report search field order, if it's
+    // not already present
+    if (!in_array($key, $report_search_field_order))
+    {
+      $report_search_field_order[] = $key;
+    }
   }
-  $field_natures[$field['name']] = $field['nature'];
-  $field_lengths[$field['name']] = $field['length'];
+  $field_natures[$key] = $field['nature'];
+  $field_lengths[$key] = $field['length'];
 }
 
 // Get the custom form inputs
@@ -897,24 +1267,25 @@ if ($phase == 2)
   // an error in PostgreSQL as the expression is of the wrong type.
   
   // Match the privacy status
-  if (($match_private != PRIVATE_BOTH) && ($match_private != ''))
+  if (($match_private != PRIVATE_BOTH) && ($match_private !== ''))
   {
     $sql .= " AND ";
-    $sql .= "(status&" . STATUS_PRIVATE;
+    $sql .= "(E.status&" . STATUS_PRIVATE;
     $sql .= ($match_private) ? "!=0)" : "=0)";  // Note that private works the other way round to the next two
   }
+
   // Match the confirmation status
-  if (($match_confirmed != CONFIRMED_BOTH) && ($match_confirmed != ''))
+  if (($match_confirmed != CONFIRMED_BOTH) && ($match_confirmed !== ''))
   {
     $sql .= " AND ";
-    $sql .= "(status&" . STATUS_TENTATIVE;
+    $sql .= "(E.status&" . STATUS_TENTATIVE;
     $sql .= ($match_confirmed) ? "=0)" : "!=0)";
   }
   // Match the approval status
-  if (($match_approved != APPROVED_BOTH) && ($match_approved != ''))
+  if (($match_approved != APPROVED_BOTH) && ($match_approved !== ''))
   {
     $sql .= " AND ";
-    $sql .= "(status&" . STATUS_AWAITING_APPROVAL;
+    $sql .= "(E.status&" . STATUS_AWAITING_APPROVAL;
     $sql .= ($match_approved) ? "=0)" : "!=0)";
   }
   
@@ -925,7 +1296,9 @@ if ($phase == 2)
     // Associative arrays (we can't just test for the string, because the database
     // contains the keys, not the values.   So we have to go through each key testing
     // for a possible match)
-    if (!empty($$var) && is_assoc($select_options["entry.$key"]))
+    if (!empty($$var) &&
+        isset($select_options["entry.$key"]) &&
+        is_assoc($select_options["entry.$key"]))
     {
       $sql .= " AND ";
       $or_array = array();
@@ -933,7 +1306,7 @@ if ($phase == 2)
       {
         // We have to use strpos() rather than stripos() because we cannot
         // assume PHP5
-        if (($option_key != '') &&
+        if (($option_key !== '') &&
             (strpos(strtolower($option_value), strtolower($$var)) !== FALSE))
         {
           $or_array[] = "E.$key='" . sql_escape($option_key) . "'";
@@ -1031,12 +1404,16 @@ if ($phase == 2)
 
 $combination_not_supported = ($output == SUMMARY) && ($output_format == OUTPUT_ICAL);
 
+$output_form = (($output_format == OUTPUT_HTML) && !$ajax &&!$cli_mode) ||
+               $combination_not_supported;
+               
+               
 // print the page header
 if ($ajax)
 {
   // don't do anything if this is an Ajax request:  we only want the data
 }
-elseif (($output_format == OUTPUT_HTML) || (empty($nmatch) && !$cli_mode) || $combination_not_supported)
+elseif ($output_form)
 {
   print_header($day, $month, $year, $area, isset($room) ? $room : "");
 }
@@ -1066,270 +1443,57 @@ else
 
 
 // Upper part: The form.
-if (!$ajax && (($output_format == OUTPUT_HTML) || (empty($nmatch) && !$cli_mode) || $combination_not_supported))
+if ($output_form)
 {
-  ?>
-  <div class="screenonly">
+
+  echo "<div class=\"screenonly\">\n";
  
-    <form class="form_general" id="report_form" method="get" action="report.php">
-      <fieldset>
-      <legend><?php echo get_vocab("report_on");?></legend>
-      
-        <fieldset>
-        <legend><?php echo get_vocab("search_criteria");?></legend>
-      
-        <div id="div_report_start">
-          <?php
-          echo "<label>" . get_vocab("report_start") . ":</label>\n";
-          genDateSelector("from_", $from_day, $from_month, $from_year);
-          ?>
+  echo "<form class=\"form_general\" id=\"report_form\" method=\"get\" action=\"report.php\">\n";
+  echo "<fieldset>\n";
+  echo "<legend>" . get_vocab("report_on") . "</legend>\n";
+  
+  // Do the search criteria fieldset
+  $search_var_keys = array('from_day', 'from_month', 'from_year',
+                           'to_day', 'to_month', 'to_year',
+                           'areamatch', 'roommatch',
+                           'typematch', 'namematch', 'descrmatch', 'creatormatch',
+                           'match_private', 'match_confirmed', 'match_approved',
+                           'custom_fields');
+  $search_vars = array();
+  foreach($search_var_keys as $var)
+  {
+    $search_vars[$var] = $$var;
+  }
+  generate_search_criteria($search_vars);
+  
+  // Then the presentation options fieldset
+  $presentation_var_keys = array('output', 'output_format',
+                                 'sortby', 'sumby');
+  $presentation_vars = array();
+  foreach($presentation_var_keys as $var)
+  {
+    $presentation_vars[$var] = $$var;
+  }
+  generate_presentation_options($presentation_vars);
         
-        </div>
-      
-        <div id="div_report_end">
-          <?php
-          echo "<label>" . get_vocab("report_end") . ":</label>\n";
-          genDateSelector("to_", $to_day, $to_month, $to_year);
-          ?>
-        </div>
-      
-        <div id="div_areamatch">                  
-          <label for="areamatch"><?php echo get_vocab("match_area");?>:</label>
-          <input type="text" id="areamatch" name="areamatch" value="<?php echo htmlspecialchars($areamatch); ?>">
-        </div>   
-      
-        <div id="div_roommatch">
-          <label for="roommatch"><?php echo get_vocab("match_room");?>:</label>
-          <input type="text" id="roommatch" name="roommatch" value="<?php echo htmlspecialchars($roommatch); ?>">
-        </div>
-      
-        <div id="div_typematch">
-          <label for="typematch"><?php echo get_vocab("match_type")?>:</label>
-          <select id="typematch" name="typematch[]" multiple="multiple" size="5">
-            <?php
-            foreach ( $booking_types as $key )
-            {
-              $val = get_type_vocab($key);
-              if (!empty($val) )
-              {
-                echo "                  <option value=\"$key\"" .
-                (is_array($typematch) && in_array ($key, $typematch) ? " selected" : "") .
-                ">$val</option>\n";
-              }
-            }
-          ?>
-          </select>
-          <span><?php echo get_vocab("ctrl_click_type") ?></span>
-        </div>
-      
-        <div id="div_namematch">     
-          <label for="namematch"><?php echo get_vocab("match_entry");?>:</label>
-          <input type="text" id="namematch" name="namematch" value="<?php echo htmlspecialchars($namematch); ?>">
-        </div>   
-      
-        <div id="div_descrmatch">
-          <label for="descrmatch"><?php echo get_vocab("match_descr");?>:</label>
-          <input type="text" id="descrmatch" name="descrmatch" value="<?php echo htmlspecialchars($descrmatch); ?>">
-        </div>
-      
-        <div id="div_creatormatch">
-          <label for="creatormatch"><?php echo get_vocab("createdby");?>:</label>
-          <input type="text" id="creatormatch" name="creatormatch" value="<?php echo htmlspecialchars($creatormatch); ?>">
-        </div>
-        
-        <?php
-        // Privacy status
-        // Only show this part of the form if there are areas that allow private bookings
-        if ($private_somewhere)
-        {
-          // If they're not logged in then there's no point in showing this part of the form because
-          // they'll only be able to see public bookings anyway (and we don't want to alert them to
-          // the existence of porivate bookings)
-          if (empty($user_level))
-          {
-            echo "<input type=\"hidden\" name=\"match_private\" value=\"" . PRIVATE_NO . "\">\n";
-          }
-          // Otherwise give them the radio buttons
-          else
-          {
-            echo "<div id=\"div_privacystatus\">\n";
-            echo "<label>" . get_vocab("privacy_status") . ":</label>\n";
-            echo "<div class=\"group\">\n";   
-            $options = array(PRIVATE_BOTH => 'both', PRIVATE_NO => 'default_public', PRIVATE_YES => 'default_private');
-            foreach ($options as $option => $token)
-            {
-              echo "<label>";
-              echo "<input class=\"radio\" type=\"radio\" name=\"match_private\" value=\"$option\"" .          
-                   (($match_private == $option) ? " checked=\"checked\"" : "") .
-                   ">" . get_vocab($token);
-              echo "</label>\n";
-            }
-            echo "</div>\n";
-            echo "</div>\n";
-          }
-        }
-        
-        // Confirmation status
-        // Only show this part of the form if there are areas that require approval
-        if ($confirmation_somewhere)
-        {
-          echo "<div id=\"div_confirmationstatus\">\n";
-          echo "<label>" . get_vocab("confirmation_status") . ":</label>\n";
-          echo "<div class=\"group\">\n";   
-          $options = array(CONFIRMED_BOTH => 'both', CONFIRMED_YES => 'confirmed', CONFIRMED_NO => 'tentative');
-          foreach ($options as $option => $token)
-          {
-            echo "<label>";
-            echo "<input class=\"radio\" type=\"radio\" name=\"match_confirmed\" value=\"$option\"" .          
-                 (($match_confirmed == $option) ? " checked=\"checked\"" : "") .
-                 ">" . get_vocab($token);
-            echo "</label>\n";
-          }
-          echo "</div>\n";
-          echo "</div>\n";
-        }
-        
-        // Approval status
-        // Only show this part of the form if there are areas that require approval
-        if ($approval_somewhere)
-        {
-          echo "<div id=\"div_approvalstatus\">\n";
-          echo "<label>" . get_vocab("approval_status") . ":</label>\n";
-          echo "<div class=\"group\">\n";   
-          $options = array(APPROVED_BOTH => 'both', APPROVED_YES => 'approved', APPROVED_NO => 'awaiting_approval');
-          foreach ($options as $option => $token)
-          {
-            echo "<label>";
-            echo "<input class=\"radio\" type=\"radio\" name=\"match_approved\" value=\"$option\"" .          
-                 (($match_approved == $option) ? " checked=\"checked\"" : "") .
-                 ">" . get_vocab($token);
-            echo "</label>\n";
-          }
-          echo "</div>\n";
-          echo "</div>\n";
-        }
-        
+  // Then the submit buttons
+  generate_submit_buttons();
 
-        // Now do the custom fields
-        foreach ($custom_fields as $key => $value)
-        {
-          $var = "match_$key";
-          echo "<div>\n";
-          echo "<label for=\"$var\">" . get_loc_field_name($tbl_entry, $key) . ":</label>\n";
-          // Output a checkbox if it's a boolean or integer <= 2 bytes (which we will
-          // assume are intended to be booleans)
-          if (($field_natures[$key] == 'boolean') || 
-              (($field_natures[$key] == 'integer') && isset($field_lengths[$key]) && ($field_lengths[$key] <= 2)) )
-          {
-            echo "<input type=\"checkbox\" class=\"checkbox\" " .
-                  "id=\"$var\" name=\"$var\" value=\"1\" " .
-                  ((!empty($$var)) ? " checked=\"checked\"" : "") .
-                  ">\n";
-          }
-          // Otherwise output a text input
-          else
-          {
-            echo "<input type=\"text\" " .
-                  "id=\"$var\" name=\"$var\" " .
-                  "value=\"" . htmlspecialchars($$var) . "\"" .
-                  ">\n";
-          }
-          echo "</div>\n";
-        }
-        ?>
-        </fieldset>
-      
-        <fieldset>
-        <legend><?php echo get_vocab("presentation_options");?></legend>
-        
-        <?php
-        echo "<div id=\"div_output\">\n";
-        $buttons = array(REPORT  => "report",
-                         SUMMARY => "summary");
-        generate_radio_group(get_vocab('output'), 'output', $output, $buttons);                  
-        echo "</div>\n";
-        
-        echo "<div id=\"div_format\">\n";
-        $buttons = array(OUTPUT_HTML => "html",
-                         OUTPUT_CSV  => "csv");
-        // The iCal output button
-        if ($times_somewhere) // We can't do iCalendars for periods yet
-        {
-          $buttons[OUTPUT_ICAL] = "ical";
-        }
-        generate_radio_group(get_vocab("format"), 'output_format', $output_format, $buttons);
-        echo "</div>\n";
-        ?>
-
-      
-        <div id="div_sortby"> 
-          <label><?php echo get_vocab("sort_rep");?>:</label>
-          <div class="group">
-            <label>
-              <input class="radio" type="radio" name="sortby" value="r"
-              <?php 
-              if ($sortby=="r") echo " checked=\"checked\"";
-              echo ">". get_vocab("room");?>
-            </label>
-            <label>
-              <input class="radio" type="radio" name="sortby" value="s"
-              <?php 
-              if ($sortby=="s") echo " checked=\"checked\"";
-              echo ">". get_vocab("sort_rep_time");?>
-            </label>
-          </div>
-        </div>
-      
-        <div id="div_sumby">
-          <label><?php echo get_vocab("summarize_by");?>:</label>
-          <div class="group">
-            <label>
-              <input class="radio" type="radio" name="sumby" value="d"
-              <?php 
-              if ($sumby=="d") echo " checked=\"checked\"";
-              echo ">" . get_vocab("sum_by_descrip");
-              ?>
-            </label>
-            <label>
-              <input class="radio" type="radio" name="sumby" value="c"
-              <?php 
-              if ($sumby=="c") echo " checked=\"checked\"";
-              echo ">" . get_vocab("sum_by_creator");
-              ?>
-            </label>
-            <label>
-              <input class="radio" type="radio" name="sumby" value="t"
-              <?php 
-              if ($sumby=="t") echo " checked=\"checked\"";
-              echo ">" . get_vocab("sum_by_type");
-              ?>
-            </label>
-          </div>
-        </div>
-        </fieldset>
-      
-        <div id="report_submit">
-          <input type="hidden" name="phase" value="2">
-          <input class="submit" type="submit" value="<?php echo get_vocab("submitquery") ?>">
-        </div>
-        
-      
-      </fieldset>
-    </form>
-  </div>
-  <?php
+  echo "</fieldset>\n";
+  echo "</form>\n";
+  echo "</div>\n";
 }
 
 // PHASE 2:  Output the results, if called with parameters:
 if ($phase == 2)
 {
-  if (($nmatch == 0) && !$cli_mode)
+  if (($nmatch == 0) && !$cli_mode && ($output_format == OUTPUT_HTML))
   {
     if ($ajax)
     {
       echo json_encode($json_data);
     }
-    elseif ($output_format == OUTPUT_HTML)
+    else
     {
       echo "<p class=\"report_entries\">" . get_vocab("nothing_found") . "</p>\n";
     }
@@ -1365,7 +1529,7 @@ if ($phase == 2)
       $body_rows = array();
       for ($i = 0; ($row = sql_row_keyed($res, $i)); $i++)
       {
-        report_row($body_rows, $row, $sortby);
+        report_row($body_rows, $row);
       }
       output_body_rows($body_rows, $output_format);
       close_report();
@@ -1374,13 +1538,23 @@ if ($phase == 2)
     else
     {
       open_summary();
-      for ($i = 0; ($row = sql_row_keyed($res, $i)); $i++)
+      if ($nmatch > 0)
       {
-        accumulate($row, $count, $hours,
-                   $report_start, $report_end,
-                   $room_hash, $name_hash);
+        for ($i = 0; ($row = sql_row_keyed($res, $i)); $i++)
+        {
+          accumulate($row, $count, $hours,
+                     $report_start, $report_end,
+                     $room_hash, $name_hash);
+        }
+        do_summary($count, $hours, $room_hash, $name_hash);
       }
-      do_summary($count, $hours, $room_hash, $name_hash);
+      else
+      {
+        // Excel doesn't seem to like an empty file with just a BOM, so give
+        // it an empty row as well to keep it happy
+        $values = array();
+        output_row($values, $output_format);
+      }
       close_summary();
     }
   }
@@ -1391,7 +1565,7 @@ if ($cli_mode)
   exit(0);
 }
 
-if ((($output_format == OUTPUT_HTML) || empty($nmatch) || $combination_not_supported) & !$ajax)
+if ($output_form)
 {
   output_trailer();
 }

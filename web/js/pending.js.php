@@ -7,6 +7,11 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(60*30); // 30 minute expiry
 
+if ($use_strict)
+{
+  echo "'use strict';\n";
+}
+
 // =================================================================================
 
 // Extend the init() function 
@@ -37,7 +42,7 @@ init = function(args) {
     ?>
     maintable.find('table.sub th.control')
              .text('-')
-             .live('click', function (event) {
+             .live('click', function () {
                   var nTr = $(this).closest('.table_container').parent().prev();
                   var serial = $(this).parent().parent().parent().attr('id').replace('subtable_', '');
                   $('#subtable_' + serial + '_wrapper').slideUp( function () {
@@ -62,14 +67,14 @@ init = function(args) {
       });
     maxActionWidth += 16; <?php // to allow for padding in the <td> ?>
     var colDefsMain = [{"sWidth": "1.2em", "aTargets": [0] },
-                       {"sWidth": maxActionWidth + "px", "aTargets": [6] },
-                       {"sType": "title-numeric", "aTargets": [5]} ];
+                       {"sWidth": maxActionWidth + "px", "aTargets": [6] }];
+    colDefsMain = colDefsMain.concat(getSTypes(maintable));
     <?php
     // Set up a click event that "opens" the table row and inserts the subtable
     ?>
     maintable.find('td.control')
              .text('+')
-             .live('click', function (event) {
+             .live('click', function () {
                   var nTr = $(this).parent();
                   var serial = nTr.attr('id').replace('row_', '');
                   var subtableId = 'subtable_' + serial;
@@ -82,7 +87,7 @@ init = function(args) {
                   // 100% - I'm not sure why - but I have left the code in]
                   ?>
                   maintable.find('tr').eq(0).find('th').each(function(i){
-                      var def = new Object();
+                      var def = {};
                       switch (i)
                       {
                         case 0: <?php // expand control ?>
@@ -100,6 +105,7 @@ init = function(args) {
                   pendingTable.fnOpen(nTr.get(0), subtable.get(0), 'table_container');
 
                   $('#' + subtableId).dataTable({"bAutoWidth": false,
+                                                 "bPaginate": false,
                                                  "sDom": 't',
                                                  "aoColumns": columns});
 
@@ -107,7 +113,7 @@ init = function(args) {
                 });
                   
     <?php // Turn the table into a datatable ?>
-    var tableOptions = new Object();
+    var tableOptions = {};
     tableOptions.sScrollXInner = "100%";
     tableOptions.aoColumnDefs = colDefsMain;
     <?php
@@ -142,4 +148,4 @@ init = function(args) {
     tableOptions.oColReorder = {"iFixedColumns": 1};
     var pendingTable = makeDataTable('#pending_table', tableOptions);
   }  // if (!lteie6)
-}
+};

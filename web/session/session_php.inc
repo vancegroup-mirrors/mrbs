@@ -106,6 +106,9 @@ if (isset($Action) && ($Action == "SetName"))
       $TargetURL .= "&returl=" . urlencode($returl);
     }
   }
+  // Problems have been reported on Windows IIS with session data not being
+  // written out without a call to session_write_close()
+  session_write_close();
   header ("Location: $TargetURL"); /* Redirect browser to initial page */
   /* Note HTTP 1.1 mandates an absolute URL. Most modern browsers support relative URLs,
     which allows to work around problems with DNS inconsistencies in the server name.
@@ -198,14 +201,14 @@ function authGet()
 
 function getUserName()
 {
-  if (isset($_SESSION) && isset($_SESSION["UserName"]) && ($_SESSION["UserName"] != ""))
+  if (isset($_SESSION) && isset($_SESSION["UserName"]) && ($_SESSION["UserName"] !== ''))
   {
     return $_SESSION["UserName"];
   }
   else
   {
     global $HTTP_SESSION_VARS;
-    if (isset($HTTP_SESSION_VARS["UserName"]) && ($HTTP_SESSION_VARS["UserName"] != ""))
+    if (isset($HTTP_SESSION_VARS["UserName"]) && ($HTTP_SESSION_VARS["UserName"] !== ''))
     {
       return $HTTP_SESSION_VARS["UserName"];
     }
@@ -218,7 +221,7 @@ function PrintLogonBox()
   global $PHP_SELF, $QUERY_STRING, $user_list_link, $day, $month, $year;
 
   $TargetURL = basename($PHP_SELF);
-  if (isset($url_base) && ($url_base != ""))
+  if (isset($url_base) && ($url_base !== ''))
   {
     $TargetURL = $url_base . '/' . $TargetURL;
   }

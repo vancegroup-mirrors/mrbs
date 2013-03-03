@@ -71,13 +71,12 @@ else
   {
     die('Configuration error: $resolution is not an integral number of minutes.');
   }
-  $start_first_slot = ($morningstarts*60) + $morningstarts_minutes;   // minutes
-  $start_last_slot  = ($eveningends*60) + $eveningends_minutes;       // minutes
-  $start_difference = ($start_last_slot - $start_first_slot) * 60;    // seconds
-  if (($start_difference < 0) or ($start_difference%$resolution != 0))
+  $start_first_slot = get_start_first_slot(1, 1, 2000);  // 1 Jan 2000 free of DST changes
+  $start_last_slot  = get_start_last_slot(1, 1, 2000);
+  $start_difference = $start_last_slot - $start_first_slot;    // seconds
+  if ($start_difference%$resolution != 0)
   {
-    die('Configuration error: make sure that $eveningends is after $morningstarts
-         and that the length of the booking day is an integral multiple of $resolution.');
+    die('Configuration error: make sure that the length of the booking day is an integral multiple of $resolution.');
   }
 }
 
@@ -92,6 +91,13 @@ else
  // in calls to nl2br.   TRUE means XHTML, FALSE means HTML.
  define('IS_XHTML', FALSE);
 
+
+/*************************************************
+ * General constants - internal use, do not change
+ *************************************************/
+ define('MINUTES_PER_DAY',  24*60);
+ define('SECONDS_PER_DAY',  MINUTES_PER_DAY * 60);
+ define('SECONDS_PER_HOUR', 3600);
  
 /*************************************************
  * REPORT constants - internal use, do not change
@@ -128,6 +134,20 @@ define('MODE_PERIODS', 2);
 // Formats for sprintf
 define('FORMAT_TIMES',   "%.2f");
 define('FORMAT_PERIODS', "%d");
+
+
+ /*************************************************
+ * USED IN EDIT_ENTRY - internal use, do not change
+ *************************************************/
+ 
+// Regular expressions used to define mandatory text fields, eg the 'name' field.   The first
+// is a positive version used in the HTML5 pattern attribute.   The second is a negative version
+// used by JavaScript for client side validation if the browser does not support pattern validation.
+define('REGEX_TEXT_POS', '\s*\S+.*');        // At least one non-whitespace character (we will trim in the handler)
+define('REGEX_TEXT_NEG', '/(^$)|(^\s+$)/');  // Cannot be blank or all whitespaces
+
+// Minimum useful value for rep_num_weeks
+define('REP_NUM_WEEKS_MIN',  1);
 
 
  /*************************************************
@@ -171,8 +191,9 @@ define('REP_DAILY',           1);
 define('REP_WEEKLY',          2);
 define('REP_MONTHLY',         3);
 define('REP_YEARLY',          4);
-define('REP_MONTHLY_SAMEDAY', 5);
-define('REP_N_WEEKLY',        6);
+
+define('REP_MONTH_ABSOLUTE', 0);
+define('REP_MONTH_RELATIVE', 1);
 
 
 /*************************************************
@@ -183,12 +204,16 @@ define('TZDIR',           'tzurl/zoneinfo');          // Directory containing TZ
 define('TZDIR_OUTLOOK',   'tzurl/zoneinfo-outlook');  // Outlook compatible TZURL definitions
 
 
-/*************************************************
- * ICALENDAR CONSTANTS - internal use, do not change
- *************************************************/
+/*****************************************
+ * ICALENDAR - internal use, do not change
+ *****************************************/
  
 define ('RFC5545_FORMAT', 'Ymd\THis');  // Format for expressing iCalendar dates
 define ('ICAL_EOL', "\r\n");            // Lines must be terminated by CRLF
+
+// Create an array which can be used to map day of the week numbers (0..6)
+// onto days of the week as defined in RFC 5545
+$RFC_5545_days = array('SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA');
 
 
 /****************************************************************
@@ -236,6 +261,8 @@ $standard_fields['repeat'] = array('id',
                                    'type',
                                    'description',
                                    'rep_num_weeks',
+                                   'month_absolute',
+                                   'month_relative',
                                    'status',
                                    'reminded',
                                    'info_time',
@@ -326,7 +353,17 @@ define('DEL_ENTRY_AJAX_BATCH_SIZE', 100);
 
 // Interval types used in booking policies
 $interval_types = array('day', 'week', 'month', 'year', 'future');
-               
+
+
+/********************************************************
+ * JavaScript - internal use, do not change
+ ********************************************************/
+
+// Setting $use_strict = TRUE will put the MRBS JavaScript into strict mode.  Useful
+// for debugging.
+$use_strict = FALSE;
+       
+
 /********************************************************
  * PHP System Configuration - internal use, do not change
  ********************************************************/
@@ -345,7 +382,7 @@ if (get_magic_quotes_runtime())
 }
 
 // Make sure notice errors are not reported, they can break mrbs code:
-$error_level = E_ALL ^ E_NOTICE;
+$error_level = E_ALL ^ E_NOTICE ^ E_USER_NOTICE;
 if (defined("E_DEPRECATED"))
 {
   $error_level = $error_level ^ E_DEPRECATED;

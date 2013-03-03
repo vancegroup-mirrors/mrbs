@@ -13,7 +13,6 @@ function print_theme_header($day, $month, $year, $area, $room)
   global $view_week_number, $weekstarts, $times_along_top, $periods, $enable_periods;
   global $auth, $max_level;
   global $default_language_tokens, $disable_automatic_language_changing, $override_locale;
-  global $lang_map_windows, $langs, $server_os;
   global $select_options;
   global $ajax_refresh_rate;
   global $main_table_cell_border_width, $main_cell_height;
@@ -51,8 +50,8 @@ function print_theme_header($day, $month, $year, $area, $room)
 <html>
   <head>
   
-  <title><?php echo get_vocab("mrbs") ?></title>
   <meta charset="<?php echo get_charset(); ?>">
+  <title><?php echo get_vocab("mrbs") ?></title>
   
   <?php
   require_once "style.inc";
@@ -172,6 +171,11 @@ function print_theme_header($day, $month, $year, $area, $room)
             $sql .= " AND create_by='" . sql_escape($user) . "'";
           }
           $n_outstanding = sql_query1($sql);
+          if ($n_outstanding < 0)
+          {
+            trigger_error(sql_error(), E_USER_WARNING);
+            fatal_error(FALSE, get_vocab("fatal_db_error"));
+          }
           echo "<div id=\"n_outstanding\"" .
                (($n_outstanding > 0) ? " class=\"outstanding\"" : '') .
                ">\n";

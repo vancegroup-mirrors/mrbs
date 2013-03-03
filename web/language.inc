@@ -11,9 +11,20 @@ require_once "functions.inc";
 $lang_subs = array
 (
   'nb-NO' => 'no',
-  'nn-NO' => 'no'
+  'nn-NO' => 'no',
 );
 
+
+// A map of browser locale aliases, maps to "our" preferred representation.
+// We downcase the key before using this map, so the keys need to be all
+// lower-case.
+$lang_aliases = array
+(
+  'sh' => 'sr-rs-latin',
+  'sr' => 'sr-rs-latin',
+  'sr-latn' => 'sr-rs-latin',
+  'sr-latn-rs' => 'sr-rs-latin',
+);
 
 // A map is needed to convert from the HTTP language specifier to a
 // locale specifier for Windows
@@ -24,7 +35,7 @@ $lang_subs = array
 // corresponding key.
 //
 // These locale TLAs found at:
-// http://www.microsoft.com/globaldev/reference/winxp/langtla.mspx
+// http://msdn.microsoft.com/en-us/goglobal/bb896001.aspx
 $lang_map_windows = array
 (
   'bg' => 'bgr',
@@ -101,6 +112,9 @@ $lang_map_windows = array
   'ru-ru' => 'rus',
   'sl' => 'slv',
   'sl-si' => 'slv',
+  'sr' => 'srl',
+  'sr-rs-latin' => 'srl',
+  'sr-hr' => 'srb',
   'sv' => 'sve',
   'sv-fi' => 'svf',
   'sv-sv' => 'sve',
@@ -119,7 +133,7 @@ $lang_map_windows = array
 // all Windows code pages
 //
 // The code pages used by these locales found at: 
-// http://www.microsoft.com/globaldev/nlsweb/default.mspx
+// http://msdn.microsoft.com/en-us/goglobal/bb896001.aspx
 $winlocale_codepage_map = array
 (
   'bgr' => 'CP1251',
@@ -169,6 +183,9 @@ $winlocale_codepage_map = array
   'plk' => 'CP1250',
   'rus' => 'CP1251',
   'slv' => 'CP1250',
+  'srb' => 'CP1251',
+  'srl' => 'CP1250',
+  'srs' => 'CP1250',
   'sve' => 'CP1252',
   'svf' => 'CP1252',
   'tha' => 'CP874',
@@ -189,9 +206,19 @@ $lang_map_unix = array
   'eu' => 'eu_ES',
   'ja' => 'ja_JP',
   'ko' => 'ko_KR',
+  'sh' => 'sr_RS',
   'sl' => 'sl_SI',
+  'sr-rs-latin' => 'sr_RS',
   'sv' => 'sv_SE',
   'zh' => 'zh_CN',
+);
+
+// A map to add extra locale specifiers onto the end of a locale specifier
+// *after* the UTF-8 specifier is added. Keys must match with $lang_map_unix
+// above
+$lang_map_unix_postfix = array
+(
+  'sr-rs-latin' => '@latin',
 );
 
 // IBM AIX locale to code set table
@@ -394,36 +421,14 @@ setlocale(LC_ALL,'C');
 // environment variable.
 $cli_mode = is_cli();
 
-// If we're running from the CLI, use the config setting
-if ($cli_mode && !empty($cli_language))
-{
-  $langs[$cli_language] = 1.0;
-}
-// Otherwise we enumerate the user's language preferences...
-elseif (isset($HTTP_ACCEPT_LANGUAGE)) // Attempt to use $HTTP_ACCEPT_LANGUAGE only when defined.
-{
-  $lang_specifiers = explode(',',$HTTP_ACCEPT_LANGUAGE);
-  foreach ($lang_specifiers as $specifier)
-  {
-    if (preg_match('/([a-zA-Z\-]+);q=([0-9\.]+)/', $specifier, $matches))
-    {
-      $langs[$matches[1]] = (float) $matches[2];
-    }
-    else if (preg_match("/([a-zA-Z\-]+)/", $specifier, $matches))
-    {
-      $langs[$matches[1]] = 1.0;
-    }
-  }
-  langs_arsort($langs);
-}
-else // Else use the value from config.inc.php.
-{
-  $langs[$default_language_tokens] = 1.0;
-}
+// Get the acceptable languages, convert to aliases where applicable and sort
+// them in reverse order so that the most acceptable one is at the start
+$langs = get_language_qualifiers();
+$langs = alias_qualifiers($langs);
+langs_arsort($langs);
 
 // The following attempts to import a language based on what the client
 // is using.
-
 if (!$disable_automatic_language_changing || $cli_mode)
 {
   $doneit = 0;
@@ -526,11 +531,11 @@ function determine_mrbs_locale()
 {
   global $override_locale;
   global $locale_warning, $locale, $windows_locale, $server_os;
-  global $lang_map_unix, $lang_map_windows;
+  global $lang_map_unix, $lang_map_unix_postfix, $lang_map_windows;
   
   $mrbs_locale = FALSE;
   
-  if ($override_locale != "")
+  if ($override_locale !== '')
   {
     $mrbs_locale = $override_locale;
     $windows_locale = $mrbs_locale;
@@ -572,9 +577,18 @@ function determine_mrbs_locale()
       }
       else
       {
-        // Convert locale=xx-xX or xx_Xx or xx_XxXx (etc.) to xx_XX[XX]; this is highly
-        // dependent on the machine's installed locales
-        $mrbs_locale = locale_format($locale, '_');
+        // First, if we have a map, use it
+        if (isset($lang_map_unix[strtolower($locale)]))
+        {
+          $locale = strtolower($locale);
+          $mrbs_locale = $lang_map_unix[strtolower($locale)];
+        }
+        else
+        {
+          // Convert locale=xx-xX or xx_Xx or xx_XxXx (etc.) to xx_XX[XX]; this is highly
+          // dependent on the machine's installed locales
+          $mrbs_locale = locale_format($locale, '_');
+        }
       }
       switch ($server_os)
       {
@@ -582,6 +596,10 @@ function determine_mrbs_locale()
         case "linux":
         case "bsd":
           $mrbs_locale .= ".UTF-8";
+          if (isset($lang_map_unix_postfix[$locale]))
+          { 
+            $mrbs_locale .= $lang_map_unix_postfix[$locale];
+          }
           break;
 
         case "macosx":
@@ -594,7 +612,7 @@ function determine_mrbs_locale()
 }
 
 
-// Sets the locale according to the MRBS config seetings and the user's
+// Sets the locale according to the MRBS config settings and the user's
 // browser preferences
 function set_mrbs_locale()
 {
@@ -627,6 +645,69 @@ function set_mrbs_locale()
 }
 
 
+// Returns an array of language qualifiers with the language key replaced
+// by its alias, if one exists
+function alias_qualifiers($qualifiers)
+{
+  global $lang_aliases;
+  
+  $result = array();
+  foreach ($qualifiers as $lang => $qualifier)
+  {
+    if (isset($lang_aliases[strtolower($lang)]))
+    {
+      $result[$lang_aliases[strtolower($lang)]] = $qualifier;
+    }
+    else
+    {
+      $result[$lang] = $qualifier;
+    }
+  }
+  return $result;
+}
+
+
+// Returns an unsorted associative array of acceptable language qualifiers, indexed
+// by language.   The language will have been replaced its alias if one exists.
+function get_language_qualifiers()
+{
+  global $cli_mode, $cli_language, $default_language_tokens, $HTTP_ACCEPT_LANGUAGE;
+  
+  static $qualifiers = array();
+  
+  if (count($qualifiers) == 0)
+  {
+    // If we're running from the CLI, use the config setting
+    if ($cli_mode && !empty($cli_language))
+    {
+      $qualifiers[$cli_language] = 1.0;
+    }
+    // Otherwise we enumerate the user's language preferences...
+    elseif (isset($HTTP_ACCEPT_LANGUAGE)) // Attempt to use $HTTP_ACCEPT_LANGUAGE only when defined.
+    {
+      $lang_specifiers = explode(',',$HTTP_ACCEPT_LANGUAGE);
+      foreach ($lang_specifiers as $specifier)
+      {
+        if (preg_match('/([a-zA-Z\-]+);q=([0-9\.]+)/', $specifier, $matches))
+        {
+          $qualifiers[$matches[1]] = (float) $matches[2];
+        }
+        else if (preg_match("/([a-zA-Z\-]+)/", $specifier, $matches))
+        {
+          $qualifiers[$matches[1]] = 1.0;
+        }
+      }
+    }
+    else // Else use the value from config.inc.php.
+    {
+      $qualifiers[$default_language_tokens] = 1.0;
+    }
+  }
+  
+  return $qualifiers;
+}
+
+
 // Returns the pathname of the language file to use for the dataTables
 // jQuery plugin.    If no suitable language file exists then returns FALSE
 function get_datatable_lang()
@@ -635,7 +716,7 @@ function get_datatable_lang()
   global $langs, $lang_map_windows, $server_os;
   
   $found_lang = FALSE;
-  $language_dir = "jquery/datatables/language";  // location of dataTables language files
+  $language_dir = "../jquery/datatables/language";  // location of dataTables language files
   
   // If automatic language changing is disabled, then use the $override_locale
   // as the first choice of language, and then second the default language tokens
@@ -696,7 +777,8 @@ function get_datatable_lang()
     }
   }
   
-  return ($found_lang) ? $lang_file : FALSE;
+  // We need to strip the "../" off the start of the $lang_file, hence 3
+  return ($found_lang) ? substr($lang_file, 3) : FALSE;
 }
 
 
@@ -714,14 +796,14 @@ function set_vocab($lang)
   }
   
   $lang = strtolower($lang);
-  
+
   if (file_exists('lang'))
   {
     $lang_file = "lang/lang.$lang";
   }
   else
   {
-    // The JavaScript files in the js directory wnd up including language.inc.
+    // The JavaScript files in the js directory end up including language.inc.
     // In this case we need to adjust the path
     $lang_file = "../lang/lang.$lang";
   }
@@ -1081,7 +1163,16 @@ function utf8_substr($str, $start)
 // _bytes_
 function utf8_bytecount($str)
 {
-  return count(str_split($str));
+  // We cannot rely on strlen() to return the number of bytes because it might
+  // have been overloaded by mb_strlen() which returns characters
+  if (function_exists('mb_strlen'))
+  {
+    return mb_strlen($str, '8bit');
+  }
+  else
+  {
+    return strlen($str);
+  }
 }
 
 

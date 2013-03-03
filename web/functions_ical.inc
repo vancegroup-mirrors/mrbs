@@ -8,10 +8,6 @@ global $timezone;
 // and the calendar
 $vtimezone = get_vtimezone($timezone);
 
-// Create an array which can be used to map day of the week numbers (0..6)
-// onto days of the week as defined in RFC 5545
-$RFC_5545_days = array('SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA');
-
 // Extracts a VTIMEZONE component from a VCALENDAR.
 function extract_vtimezone($vcalendar)
 {
@@ -35,6 +31,7 @@ function extract_vtimezone($vcalendar)
 
 
 // download the contents of the web page at $url and return it as a string
+// Returns the contents of the URL, or else FALSE on failure
 function download($url)
 {
   global $proxy;
@@ -42,7 +39,7 @@ function download($url)
   $connect_timeout  = 2;  // seconds
   $transfer_timeout = 2;  // seconds
   $curlopt_timeout  = 3;  // seconds
-  
+
   // If we can we use cURL to download the page because it allows us to
   // set a timeout on establishing a connection as well as on the transfer time.
   // (We can only set a timeout on transfer time with file_get_contents()).  The
@@ -56,6 +53,10 @@ function download($url)
     curl_setopt($ch, CURLOPT_TIMEOUT, $curlopt_timeout);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
     $contents = curl_exec($ch);
+    if ($contents === FALSE)
+    {
+      trigger_error(curl_error($ch), E_USER_WARNING);
+    }
     curl_close($ch);
   }
   
@@ -70,6 +71,10 @@ function download($url)
                                                            'timeout' => $transfer_timeout)));
     // Suppress any timeout warnings
     $contents = @file_get_contents($url);
+    if ($contents === FALSE)
+    {
+      trigger_error("MRBS: could not get contents of $url", E_USER_WARNING);
+    }
   }
   
   return $contents;
@@ -142,26 +147,42 @@ function get_vtimezone($tz)
       
       $vcalendar = download($tz_url);
       
-      if ($vcalendar)
+      if ($vcalendar === FALSE)
+      {
+        trigger_error("MRBS: failed to download a new timezone definition from $tz_url", E_USER_WARNING);
+      }
+      else
       {
         $new_vtimezone = extract_vtimezone($vcalendar);
-        if (!empty($new_vtimezone))
+        if (empty($new_vtimezone))
+        {
+          trigger_error("MRBS: $tz_url did not contain a valid VTIMEZONE", E_USER_WARNING);
+        }
+        else
         {
           // We've got a valid VTIMEZONE, so we can overwrite $vtimezone
           $vtimezone = $new_vtimezone;
-          // Update the database
-          $sql = "UPDATE $tbl_zoneinfo
-                     SET vtimezone='" . sql_escape($vtimezone) . "',
-                         last_updated=" . time() . "
-                   WHERE timezone='" . sql_escape($tz) . "'
-                     AND outlook_compatible=$zoneinfo_outlook_compatible";
-          if (sql_command($sql) < 0)
-          {
-            trigger_error(sql_error(), E_USER_WARNING);
-            fatal_error(FALSE, get_vocab("fatal_db_error"));
-          }
         }
       }
+
+      // Update the database, whether we've successfully got a new VTIMEZONE or not.
+      // If we didn't manage to get a new VTIMEZONE, updating the database will update
+      // the last_updated field and mean that MRBS will not try again until after the
+      // expiry interval has passed.  This will mean that we don't introduce a few
+      // seconds delay every time this file is included.  (The most likely reason that
+      // we couldn't get a new VTIMEZONE is that the site doesn't have external internet
+      // access, so there's no point in retrying for a while).
+      $sql = "UPDATE $tbl_zoneinfo
+                 SET vtimezone='" . sql_escape($vtimezone) . "',
+                     last_updated=" . time() . "
+               WHERE timezone='" . sql_escape($tz) . "'
+                 AND outlook_compatible=$zoneinfo_outlook_compatible";
+      if (sql_command($sql) < 0)
+      {
+        trigger_error(sql_error(), E_USER_WARNING);
+        fatal_error(FALSE, get_vocab("fatal_db_error"));
+      }
+
     }
   }
   // There's nothing in the database, so try and get a VTIMEZONE component
@@ -354,7 +375,7 @@ function get_repeat_details($rrule, $start_time, &$errors)
 {
   global $RFC_5545_days;
   
-  // Set up the result aeeay with safe defaults
+  // Set up the result array with safe defaults
   $result = array('rep_type' => REP_NONE,
                   'rep_opt' => '0000000',
                   'rep_num_weeks' => 0,
@@ -378,14 +399,14 @@ function get_repeat_details($rrule, $start_time, &$errors)
       $result['rep_type'] = REP_DAILY;
       break;
     case 'WEEKLY':
+      $result['rep_type'] = REP_WEEKLY;
       if (isset($rules['interval']) && ($rules['interval'] > 1))
       {
-        $result['rep_type'] = REP_N_WEEKLY;
         $result['rep_num_weeks'] = $rules['interval'];
       }
       else
       {
-        $result['rep_type'] = REP_WEEKLY;
+        $result['rep_num_weeks'] = 1;
       }
       if (isset($rules['BYDAY']))
       {
@@ -400,13 +421,13 @@ function get_repeat_details($rrule, $start_time, &$errors)
       $result['rep_opt'] = get_rep_opt($byday_days);
       break;
     case 'MONTHLY':
+      $result['rep_type'] = REP_MONTHLY;
       if (!isset($rules['BYDAY']))
       {
-        $result['rep_type'] = REP_MONTHLY;
+        $result['month_absolute'] = $rules['BYMONTHDAY'];
       }
       else
       {
-        $result['rep_type'] = REP_MONTHLY_SAMEDAY;
         $byday_days = explode(',', $rules['BYDAY']);
         if (count($byday_days) > 1)
         {
@@ -425,19 +446,13 @@ function get_repeat_details($rrule, $start_time, &$errors)
             $result['rep_type'] = REP_WEEKLY;
             $result['rep_opt'] = get_rep_opt(array($day));
           }
+          elseif (($nth == '5') || ($nth == '-5'))
+          {
+            $errors[] = get_vocab("BYDAY_equals_5") . " $nth$day";
+          }
           else
           {
-            if ((int) $nth < 0)
-            {
-              $errors[] = get_vocab("negative_BYDAY") . " $nth$day";
-            }
-            elseif ($nth == '5')
-            {
-              $errors[] = get_vocab("BYDAY_equals_5") . " $nth$day";
-            }
-            // otherwise we're OK and we don't need to do anything more because we know
-            // we've only got one day and the REP_MONTHLY_SAMEDAY repeat type will work
-            // out the day from the start date
+            $result['relative'] = $byday_day;
           }
         }
       }
@@ -493,7 +508,16 @@ function get_repeat_details($rrule, $start_time, &$errors)
 function ical_fold($str)
 { 
   $line_split = "\r\n ";  // The RFC also allows a tab instead of a space
-  $space_octets = utf8_bytecount(' ');  // Could be two bytes if we're using UTF-16
+  
+  // We assume that we are using UTF-8 and therefore that a space character
+  // is one octet long.   If we ever switched for some reason to using for
+  // example UTF-16 this assumption would be invalid.
+  if ((get_charset() != 'utf-8') || (get_mail_charset() != 'utf-8'))
+  {
+    trigger_error("MRBS: internal error - using unsupported character set", E_USER_WARNING);
+  }
+  $space_octets = 1;
+
   $octets_max = 75;
   
   $result = '';
@@ -713,14 +737,15 @@ function create_rrule($data)
     case REP_NONE:
       return $rule;
       break;
+      
     case REP_DAILY:
       $rule .= "FREQ=DAILY";
       break;
+      
     case REP_WEEKLY:
-    case REP_N_WEEKLY;
       $rule .= "FREQ=WEEKLY";
-      // Interval for N_WEEKLY (Interval defaults to 1)
-      if ($data['rep_type'] == REP_N_WEEKLY)
+      // Interval for WEEKLY (Interval defaults to 1)
+      if ($data['rep_num_weeks'] > 1)
       {
         $rule .= ";INTERVAL=" . $data['rep_num_weeks'];
       }
@@ -739,23 +764,23 @@ function create_rrule($data)
         $rule .= ";BYDAY=$dow_list";
       }
       break;
-    case REP_MONTHLY_SAMEDAY:
-      $dow = date('w', $data['start_time']);  // day of the week
-      $dom = date('j', $data['start_time']);  // day of the month
-      // Work out the week of the month.    If this is the fifth week of the month
-      // then make it -1 (last week of the month in RFC 5545 terms)
-      $wom = intval($dom/7) + 1;
-      if ($wom > 4)
-      {
-        $wom = -1;
-      }
-      $wom = sprintf('%+d', $wom);
-      $rule .= ";BYDAY=";
-      $rule .= $wom;
-      $rule .= $RFC_5545_days[$dow];
+      
     case REP_MONTHLY:
       $rule .= "FREQ=MONTHLY";
+      if (isset($data['month_absolute']))
+      {
+        $rule .= ";BYMONTHDAY=" . $data['month_absolute'];
+      }
+      elseif (isset($data['month_relative']))
+      {
+        $rule .= ";BYDAY=" . $data['month_relative'];
+      }
+      else
+      {
+        trigger_error("Unknown monthly repeat type, E_USER_NOTICE");
+      }
       break;
+      
     case REP_YEARLY:
       $rule .= "FREQ=YEARLY";
       break;
@@ -1007,7 +1032,7 @@ function create_icalendar($method, $components)
   $result .= ICAL_EOL;  // Has to end with a CRLF
   
   $result = ical_fold($result);
-
+  
   return $result;
 }
 
@@ -1119,12 +1144,20 @@ function export_icalendar(&$res, $keep_private, $export_end=PHP_INT_MAX)
         // we can check whether any are missing and if so set their status to cancelled.
         // (We use PHP_INT_MAX rather than $max_rep_entrys because $max_rep_entrys may
         // have changed since the series was created.)
+        $rep_details = array();
+        foreach (array('rep_type', 'rep_opt', 'rep_num_weeks', 'month_absolute') as $key)
+        {
+          if (isset($start_row[$key]))
+          {
+            $rep_details[$key] = $start_row[$key];
+          }
+        }
+        
         $expected_entries = mrbsGetRepeatEntryList($start_row['start_time'], 
                                                    $start_row['end_date'],
-                                                   $start_row['rep_type'],
-                                                   $start_row['rep_opt'],
-                                                   $start_row['rep_num_weeks'],
+                                                   $rep_details,
                                                    PHP_INT_MAX);
+                                                   
         // And keep an array of all the entries we actually see
         $actual_entries = array();
         // Create the series event

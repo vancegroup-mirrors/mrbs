@@ -296,14 +296,13 @@ function toPeriodString($start_period, &$dur, &$units, $translate=TRUE)
 
   $max_periods = count($periods);
   $dur /= 60;  // duration now in minutes
-  $mins_in_day = 24*60;
-  $days = $dur / $mins_in_day;
-  $remainder = $dur % $mins_in_day;
+  $days = $dur / MINUTES_PER_DAY;
+  $remainder = $dur % MINUTES_PER_DAY;
   // strip out any gap between the end of the last period on one day
   // and the beginning of the first on the next
   if ($remainder > $max_periods)
   {
-    $remainder += $max_periods - $mins_in_day;
+    $remainder += $max_periods - MINUTES_PER_DAY;
   }
   
   // We'll express the duration as an integer, in days if possible, otherwise periods
@@ -342,24 +341,156 @@ function fromPeriodString($start_period, &$units, $dur_units)
     $end_period = $start_period + $units;
     if ($end_period > $max_periods)
     {
-      $units = (24*60*floor($end_period/$max_periods)) + ($end_period%$max_periods) - $start_period;
+      $units = (MINUTES_PER_DAY * floor($end_period/$max_periods)) + ($end_period%$max_periods) - $start_period;
     }
   }
   if ($dur_units == "days")
   {
     if ($start_period == 0)
     {
-      $units = $max_periods + ($units-1)*60*24;
+      $units = $max_periods + ($units-1)*MINUTES_PER_DAY;
     }
     else
     {
-      $units = $units * 60 * 24;
+      $units = $units * MINUTES_PER_DAY;
     }
   }
   
   // Then convert into seconds
   $units = (int) $units;
   $units = 60 * $units;
+}
+
+
+// Splits a BYDAY string into its ordinal and day parts, returned as a simple array.
+// For example "-1SU" is returned as array("-1", "SU");
+function byday_split($byday)
+{
+  $result = array();
+  $split_pos = strlen($byday) -2;
+  $result[] = substr($byday, 0, $split_pos);
+  $result[] = substr($byday, $split_pos, 2);
+  return $result;
+}
+
+
+// Returns the BYDAY value for a given timestamp, eg 4SU for fourth Sunday in
+// the month, or -1MO for the last Monday.
+function date_byday($timestamp)
+{
+  global $RFC_5545_days;
+
+  $dow = $RFC_5545_days[date('w', $timestamp)];
+  $dom = date('j', $timestamp);
+  $ord = intval(($dom - 1)/7) + 1;
+  if ($ord == 5)
+  {
+    $ord = -1;
+  }
+  return $ord . $dow;
+}
+
+
+// Convert an RFC 5545 day to an ordinal number representing the day of the week,
+// eg "MO" returns "1"
+function RFC_5545_day_to_ord($day)
+{
+  global $RFC_5545_days;
+  
+  $tmp = array_keys($RFC_5545_days, $day);
+  return $tmp[0];
+}
+
+
+// Converts a BYDAY (eg "2SU") value for a given year and month into a
+// day of the month.   Returns FALSE if the day does not exist (eg for "5SU"
+// when there are only four Sundays in the month)
+function byday_to_day($year, $month, $byday)
+{
+  // First of all normalise the month and year, as we allow $month > 12
+  while ($month > 12)
+  {
+    $month -= 12;
+    $year++;
+  }
+  // Get the ordinal number and the day of the week
+  list($ord, $dow) = byday_split($byday);
+  // Get the starting day of the month
+  $start_dom = ($ord > 0) ? 1 : date('t', mktime(0, 0, 0, $month, 1, $year));
+  // Get the starting day of the week
+  $start_dow = date('w', mktime(0, 0, 0, $month, $start_dom, $year));
+  // Turn the BYDAY day of the week into an integer
+  $byday_dow = RFC_5545_day_to_ord($dow);
+  // get the difference in days
+  $diff = $byday_dow - $start_dow;
+  $diff += ($ord > 0) ? 7 : -7;
+  $diff = $diff %7;
+  // add in the weeks
+  $diff += ($ord > 0) ? ($ord - 1) * 7 : ($ord + 1) * 7;
+  
+  $day = $start_dom + $diff;
+  
+  if (checkdate($month, $day, $year))
+  {
+    return $day;
+  }
+  else
+  {
+    return FALSE;
+  }
+}
+
+
+// Returns TRUE if the time $hm1 is before $hm2
+// $hm1 and $hm2 are associative arrays indexed by 'hours' and 'minutes'.
+// The indices are chosen to allow the result of the PHP getdate() function
+// to be passed as parameters
+function hm_before($hm1, $hm2)
+{
+  return ($hm1['hours'] < $hm2['hours']) ||
+         (($hm1['hours'] == $hm2['hours']) && ($hm1['minutes'] < $hm2['minutes']));
+}
+
+
+// Returns TRUE if the end of the last slot is on the day after the beginning
+// of the first slot
+function day_past_midnight()
+{
+  global $morningstarts, $morningstarts_minutes, $eveningends, $eveningends_minutes, $resolution;
+  
+  $start_first_slot = (($morningstarts * 60) + $morningstarts_minutes) * 60;
+  $end_last_slot = ((($eveningends * 60) + $eveningends_minutes) * 60) + $resolution;
+  $end_last_slot = $end_last_slot % SECONDS_PER_DAY;
+  
+  return ($end_last_slot <= $start_first_slot);
+}
+
+
+// Gets the UNIX timestamp for the start of the first slot on the given day
+function get_start_first_slot($month, $day, $year)
+{
+  global $morningstarts, $morningstarts_minutes;
+  
+  $t = mrbs_mktime($morningstarts, $morningstarts_minutes, 0,
+                   $month, $day, $year);
+  return $t;
+}
+
+
+// Gets the UNIX timestamp for the start of the last slot on the given day
+function get_start_last_slot($month, $day, $year)
+{
+  global $morningstarts, $morningstarts_minutes, $eveningends, $eveningends_minutes;
+  
+  // Work out if $evening_ends is really on the next day
+  if (hm_before(array('hours' => $eveningends, 'minutes' => $eveningends_minutes),
+                array('hours' => $morningstarts, 'minutes' => $morningstarts_minutes)))
+  {
+    $day++;
+  }
+  $t = mrbs_mktime($eveningends, $eveningends_minutes, 0,
+                   $month, $day, $year);
+  return $t;
 }
 
 
@@ -394,122 +525,821 @@ function get_duration($start_time, $end_time, $enable_periods, $translate=TRUE)
 }
 
 
-// Generate an input field with an associated label
-
-//   $maxlength   the maximum length of input allowed
-
-//   $attributes  additional attributes, allowing HTML5 input types such as number and
-//                email to be used.   Note that additional attributes such as min, etc.
-//                can also be included in the string, eg 'type="number" min="1" step="1"'.
-function generate_input($label_text, $name, $value, $disabled=FALSE, $maxlength=NULL, $attributes=NULL)
+// Generate a checkbox with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'label'       The text to be used for the field label.
+//        'name'        The name of the element.
+//      OPTIONAL
+//        'label_after' Whether to put the label before or after the checkbox.  Default FALSE
+//        'id'          The id of the element.  Defaults to be the same as the name.
+//        'value'       The value of the input.  Default ''
+//        'class'       A class (or array of classes) to give the element.  Default NULL
+//        'disabled'    Whether the field should be disabled.  Default FALSE
+//        'mandatory'   Whether the field is a required field.  Default FALSE
+//        'attributes'  Additional attributes not covered explicitly above.  Default NULL.
+//                      Can be either a simple string or an array of attributes.
+//
+function generate_checkbox($params)
 {
+  // some sanity checking on params
+  foreach (array('label', 'name', 'id', 'label_after', 'value', 'class',
+                 'disabled', 'mandatory', 'attributes') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'label':
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'id':
+          $params[$key] = $params['name'];
+          break;
+        case 'value':
+          $params[$key] = '';
+          break;
+        case 'disabled':
+        case 'label_after':
+        case 'mandatory':
+          $params[$key] = FALSE;
+          break;
+        case 'class':
+          $params[$key] = array();
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  if (isset($params['attributes']) && is_array($params['attributes']))
+  {
+    $params['attributes'] = implode(' ', $params['attributes']);
+  }
+  
+  if (!is_array($params['class']))
+  {
+    $params['class'] = array($params['class']);
+  }
+  $params['class'][] = 'checkbox';
+  
   // generate the HTML
-  $html  = "<label for=\"$name\">$label_text</label>\n";
-  $html .= "<input" . ((isset($attributes)) ? " $attributes" : "") . " id=\"$name\" name=\"$name\"";
-  $html .= ($disabled) ? " disabled=\"disabled\"" : '';
-  $html .= (isset($maxlength)) ? " maxlength=\"$maxlength\"" : '';
-  // Don't give an empty string if it's a number as that's not a valid floating point number
-  // and will fail HTML5 validation
-  if (!isset($attributes) || (strpos($attributes, 'type="number"') === FALSE) || ($value != '') )
+  // no HTML escaping for the label - it is trusted
+  $html  = "<label for=\"" . $params['id'] . "\"";
+  $html .= ($params['label_after']) ? ' class="secondary"' : '';
+  $html .= ">";
+  if (!$params['label_after'])
   {
-    $html .= " value=\"" . htmlspecialchars($value) . "\"";
+    $html .= $params['label'] . "</label>";
   }
-  $html .= ">\n";
-  // and a hidden input if the input box is disabled
-  if ($disabled)
+  $html .= "<input type=\"checkbox\"";
+  $html .= (count($params['class']) > 0) ? ' class="' . implode(' ', $params['class']) . '"' : '';
+  $html .= " id=\"" . $params['id'] . "\" name=\"" . $params['name'] . "\" value=\"1\"";
+  $html .= (empty($params['value'])) ? "" : " checked=\"checked\"";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : "";
+  $html .= ($params['mandatory']) ? " required aria-required=\"true\"" : "";
+  $html .= (isset($params['attributes'])) ? " " . $params['attributes'] : '';
+  $html .= ">";
+  if ($params['label_after'])
   {
-    $html .= "<input type=\"hidden\" name=\"$name\" value=\"".
-      htmlspecialchars($value)."\">\n";
+    $html .= $params['label'] . "</label>";
   }
-  echo $html;
-}
-
-
-// Generate a group of radio buttons
-// $buttons is an associative array where the key is the value of the button
-// and the value is the button text
-function generate_radio_group($label_text, $name, $current, $buttons)
-{
-  echo "<label>$label_text:</label>\n";
-  echo "<div class=\"group\">\n";
-  // Output each radio button
-  foreach ($buttons as $value => $token)
+  $html .= "\n";
+  
+  // and a hidden input if the input box is disabled and the value is true
+  // (the checkbox isn't posted if not checked)
+  if (($params['disabled']) && !empty($params['value']))
   {
-    echo "<label>";
-    echo "<input class=\"radio\" type=\"radio\" name=\"$name\" value=\"$value\"";          
-    if ($current == $value)
-    {
-      echo " checked=\"checked\"";
-    }
-    echo ">" . get_vocab($token);
-    echo "</label>\n";
-  }
-  echo "</div>\n";
-}
-
-
-// Generates a select box from $options, an array of options
-// If $disabled is TRUE, then the select box is disabled and a hidden
-// input is generated to pass through $current
-function generate_select($label_text, $name, $current, $options, 
-                         $mandatory = FALSE, $disabled=FALSE)
-{
-  // generate the HTML
-  $html  = "<label for=\"$name\">$label_text</label>\n";
-  $html .= "<select id=\"$name\" name=\"$name\"";
-  $html .= ($disabled) ? " disabled=\"disabled\"" : "";
-  $html .= ($mandatory) ? " required" : "";
-  $html .= ">\n";
-
-  // We can cope with both associative and ordinary arrays
-  if (is_assoc($options))
-  {
-    foreach ($options as $key => $value)
-    {
-      $html .= "<option value=\"$key\"";
-      $html .= (isset($current) && ($current == $key)) ? " selected=\"selected\"" : '';
-      $html .= ">".htmlspecialchars($value)."</option>\n";
-    }
-  }
-  else
-  {
-    foreach ($options as $option)
-    {
-      $html .= "<option";
-      $html .= (isset($current) && ($current == $option)) ? " selected=\"selected\"" : '';
-      $html .= ">".htmlspecialchars($option)."</option>\n";
-    }
-  }
-  $html .= "</select>\n";
-  // and a hidden input if the select box is disabled
-  if ($disabled)
-  {
-    $html .= "<input type=\"hidden\" name=\"$name\" value=\"".
-      htmlspecialchars($current)."\">\n";
+    $html .= "<input type=\"hidden\" value=\"1\" name=\"" . $params['name'] . "\">\n";
   }
   
   echo $html;
 }
 
-// Generate a textarea with an associated label
-// If $disabled is TRUE, then the textarea is disabled and a hidden
-// input is generated to pass through $value
+
+// Generate an ordinary input field, ie an <input>, with an associated label
 //
-//   $attributes  additional attributes, allowing HTML5 input types such as required
-function generate_textarea($label_text, $name, $value, $disabled=FALSE, $attributes=NULL)
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'name'          The name of the input.
+//      OPTIONAL
+//        'label'         The text to be used for the field label.
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'value'         The value of the input.  Default ''
+//        'type'          The type of input, eg 'text', 'number', etc.  Default NULL
+//        'step'          The value of the 'step' attribute.  Default NULL
+//        'min'           The value of the 'min' attribute.  Default NULL
+//        'max'           The value of the 'max' attribute.  Default NULL
+//        'suffix'        A string that is displayed after the input field
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//        'mandatory'     Whether the field is a required field.  Default FALSE
+//        'maxlength'     The maximum length of input allowed.   Default NULL (no limit)
+//        'attributes'    Additional attributes not covered explicitly above.  Default NULL.
+//                        Can be either a simple string or an array of attributes.
+//
+function generate_simple_input($params)
 {
-  // generate the HTML
-  $html  = "<label for=\"$name\">$label_text</label>\n";
-  // textarea rows and cols are overridden by CSS height and width
-  $html .= "<textarea id=\"$name\" name=\"$name\" rows=\"8\" cols=\"40\"";
-  $html .= (isset($attributes)) ? " $attributes" : "";
-  $html .= ($disabled) ? " disabled=\"disabled\"" : '';
-  $html .= ">" . htmlspecialchars($value) . "</textarea>\n";
-  // and a hidden input if the textarea is disabled
-  if ($disabled)
+  // some sanity checking on params
+  foreach (array('label', 'label_title', 'name', 'value', 'type', 'step', 'disabled',
+                 'create_hidden', 'mandatory', 'maxlength', 'attributes', 'suffix') as $key)
   {
-    $html .= "<input type=\"hidden\" name=\"$name\" value=\"".
-      htmlspecialchars($value)."\">\n";
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'value':
+        case 'label_title':
+          $params[$key] = '';
+          break;
+        case 'disabled':
+        case 'mandatory':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  if (isset($params['attributes']) && is_array($params['attributes']))
+  {
+    $params['attributes'] = implode(' ', $params['attributes']);
+  }
+  
+  // generate the HTML
+  $html = '';
+  if (isset($params['label']))
+  {
+    // no HTML escaping for the label - it is trusted
+    $html .= "<label for=\"" . $params['name'] . "\"";
+    $html .= (empty($params['label_title'])) ? '' : ' title="' . htmlspecialchars($params['label_title']) . '"';
+    $html .= ">" . $params['label'] . "</label>\n";
+  }
+  $html .= "<input";
+  $html .= (isset($params['type'])) ? " type=\"" . $params['type'] . "\"" : "";
+  $html .= (isset($params['step'])) ? " step=\"" . $params['step'] . "\"" : "";
+  $html .= (isset($params['min'])) ? " min=\"" . $params['min'] . "\"" : "";
+  $html .= (isset($params['max'])) ? " max=\"" . $params['max'] . "\"" : "";
+  $html .= (isset($params['pattern'])) ? " pattern=\"" . htmlspecialchars($params['pattern']) . "\"" : "";
+  $html .= (isset($params['attributes'])) ? " " . $params['attributes'] : "";
+  $html .= " id=\"" . $params['name'] . "\" name=\"" . $params['name'] . "\"";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : '';
+  $html .= ($params['mandatory']) ? " required aria-required=\"true\"" : '';
+  $html .= (isset($params['maxlength'])) ? " maxlength=\"" . $params['maxlength'] . "\"" : '';
+  // Don't give an empty string if it's a number as that's not a valid floating point number
+  // and will fail HTML5 validation
+  if (($params['value'] !== '') ||
+      (isset($params['type']) && ($params['type'] != 'number')) )
+  {
+    $html .= " value=\"" . htmlspecialchars($params['value']) . "\"";
+  }
+  $html .= ">";
+  if (isset($params['suffix']))
+  {
+    $html .= "<span>" . $params['suffix'] . "</span>";
+  }
+  $html .= "\n";
+  // and a hidden input if the input box is disabled
+  if ($params['disabled'] && $params['create_hidden'])
+  {
+    $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\" value=\"".
+      htmlspecialchars($params['value'])."\">\n";
+  }
+  echo $html;
+}
+
+
+// Generate an input which will be a <select> element if $select_options is set
+// for the field, otherwise a <datalist> element if $datalist_options is set,
+// otherwise an ordinary <input> field.
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'name'          The name of the input.
+//      OPTIONAL
+//        'field'         The name of the field, eg 'entry.name' as used by
+//                        $select_options and $datalist_options
+//        'label'         The text to be used for the field label.
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'value'         The value of the input.  Default ''
+//        'suffix'        A string that is displayed after the input field
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//        'mandatory'     Whether the field is a required field.  Default FALSE
+//        'maxlength'     The maximum length of input allowed.   Default NULL (no limit)
+//        'attributes'    Additional attributes, allowing HTML5 input types such as number and
+//                        email to be used.   Note that additional attributes such as min, etc.
+//                        can also be included in the string, eg 'type="number" min="1" step="1"'.
+//                        Default NULL.  Can be either a simple string or an array of attributes
+function generate_input($params)
+{
+  global $select_options, $datalist_options;
+  
+  if (isset($params['field']) && isset($select_options[$params['field']]))
+  {
+    $params['options']   = $select_options[$params['field']];
+    generate_select($params);
+  }
+  elseif (isset($params['field']) && isset($datalist_options[$params['field']]))
+  {
+    $params['options']   = $datalist_options[$params['field']];
+    generate_datalist($params);
+  }
+  else
+  {
+    generate_simple_input($params);
+  }
+}
+
+
+// Generate a single radio button (useful when you want to arrange the members
+// of a radio group slightly differently from the standard way)
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'name'          The name of the input.
+//      OPTIONAL
+//        'value'         The value of the input.  Default ''
+//        'options'       An associative array where the key is the value of the
+//                        button and the value is the button text
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//
+function generate_radio($params)
+{
+  // some sanity checking on params
+  foreach (array('label', 'name', 'options', 'value', 'disabled', 'create_hidden') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'options':
+          $params[$key] = array();
+          break;
+        case 'value':
+          $params[$key] = '';
+          break;
+        case 'disabled':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  // get the value and the text for the button.   Although there should only
+  // be one element in the options array we use an array for consistency
+  // with the other functions
+  $option = each($params['options']);
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html  = "<label class=\"radio\">";
+  $html .= "<input class=\"radio\" type=\"radio\" name=\"" . $params['name'] . "\" value=\"" . htmlspecialchars($option['key']) . "\"";          
+  $html .= ($params['value'] == $option['key']) ? " checked=\"checked\"" : "";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : "";
+  $html .= ">" . htmlspecialchars($option['value']);
+  $html .= "</label>\n";
+  
+  // and a hidden input if the input box is disabled and the value is true
+  // (the checkbox isn't posted if not checked)
+  if ($params['disabled'] && $params['create_hidden'] && ($params['value'] == $option['key']))
+  {
+    $html .= "<input type=\"hidden\" value=\"" . htmlspecialchars($option['key']) . "\" name=\"" . $params['name'] . "\">\n";
+  }
+  echo $html;
+}
+
+
+// Generate a group of radio buttons with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'label'         The text to be used for the field label.
+//        'name'          The name of the input.
+//      OPTIONAL
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'value'         The value of the input.  Default ''
+//        'options'       An associative array where the key is the value of the
+//                        button and the value is the button text
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//
+function generate_radio_group($params)
+{
+  // some sanity checking on params
+  foreach (array('label', 'label_title', 'name', 'options', 'value', 'disabled', 'create_hidden') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'label':
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'options':
+          $params[$key] = array();
+          break;
+        case 'label_title':
+        case 'value':
+          $params[$key] = '';
+          break;
+        case 'disabled':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html  = "<label";
+  $html .= (empty($params['label_title'])) ? '' : ' title="' . htmlspecialchars($params['label_title']) . '"';
+  $html .= ">" . $params['label'] . "</label>\n";
+  $html .= "<div class=\"group\">\n";
+  echo $html;
+  
+  // Output each radio button
+  while ($option = each($params['options']))
+  {
+    generate_radio(array('name'          => $params['name'],
+                         'options'       => array($option['key'] => $option['value']),
+                         'value'         => $params['value'],
+                         'disabled'      => $params['disabled'],
+                         'create_hidden' => $params['create_hidden']));
+  }
+
+  $html = "</div>\n";
+  if ($params['disabled'] && $params['create_hidden'])
+  {
+    $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\"";
+    $html .= " value=\"" . htmlspecialchars($params['value']) . "\">\n";
+  }
+  echo $html;
+}
+
+
+// Generate a group of checkboxes with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'label'       The text to be used for the field label.
+//        'name'        The name of the input.
+//      OPTIONAL
+//        'value'       The value of the input.  Can be an array. Default array()
+//        'options'     An associative array where the key is the value of the
+//                      button and the value is the button text
+//        'force_assoc' Boolean.  Forces the options array to be treated as an
+//                      associative array.  Default FALSE, ie it is treated as whatever
+//                      it looks like.  (This parameter is necessary because if you
+//                      index an array with strings that look like integers then PHP
+//                      casts the keys to integers and the array becomes a simple array)
+//        'disabled'    Whether the field should be disabled.  Default FALSE
+//
+function generate_checkbox_group($params)
+{
+  // some sanity checking on params
+  foreach (array('label', 'name', 'options', 'force_assoc', 'value', 'disabled') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'label':
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'options':
+          $params[$key] = array();
+          break;
+        case 'value':
+          $params[$key] = array();
+          break;
+        case 'force_assoc':
+        case 'disabled':
+          $params[$key] = FALSE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  if (!is_array($params['value']))
+  {
+    $params['value'] = array($params['value']);
+  }
+  
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html  = "<label>" . $params['label'] . "</label>\n";
+  $html .= "<div class=\"group\">\n";
+  // Output each checkbox
+  foreach ($params['options'] as $value => $token)
+  {
+    // We can cope with both associative and ordinary arrays
+    if (!$params['force_assoc'] && !is_assoc($params['options']))
+    {
+      $value = $token;
+    }
+    $html .= "<label>";
+    $html .= "<input class=\"checkbox\" type=\"checkbox\" name=\"" . $params['name'] . "\"";
+    $html .= " value=\"" . htmlspecialchars($value) . "\"";          
+    $html .= (in_array($value, $params['value'])) ? " checked=\"checked\"" : "";
+    $html .= ($params['disabled']) ? " disabled=\"disabled\"" : "";
+    $html .= ">" . htmlspecialchars($token);
+    $html .= "</label>\n";
+    if ($params['disabled'] && in_array($value, $params['value']))
+    {
+      $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\"";
+      $html .= " value=\"" . htmlspecialchars($value) . "\">\n";
+    }
+  }
+  $html .= "</div>\n";
+  
+  echo $html;
+}
+
+
+// Generates a select box with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'name'          The name of the element.
+//      OPTIONAL
+//        'id'            The id of the element.  Defaults to the same as the name.
+//        'label'         The text to be used for the field label.
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'options'       An array of options for the select element.   Can be a simple
+//                        array or an associative array with value => text members for
+//                        each <option> in the <select> element.   Default is an empty array.
+//        'force_assoc'   Boolean.  Forces the options array to be treated as an
+//                        associative array.  Default FALSE, ie it is treated as whatever
+//                        it looks like.  (This parameter is necessary because if you
+//                        index an array with strings that look like integers then PHP
+//                        casts the keys to integers and the array becomes a simple array)
+//        'value'         The value of the input.  Default ''.   Can be a single value
+//                        or an array of values.
+//        'size'          The value of the 'size' attribute.  Default NULL
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//        'mandatory'     Whether the field is a required field.  Default FALSE
+//        'multiple'      Whether multiple selections are allowed.  Default FALSE
+//        'attributes'    Additional attributes not covered explicitly above.  Default NULL.
+//                        Can be either a simple string or an array of attributes.
+//
+function generate_select($params)
+{
+  // some sanity checking on params
+  foreach (array('label', 'label_title', 'name', 'id', 'options', 'force_assoc',
+                 'value', 'size', 'disabled', 'create_hidden', 'mandatory',
+                 'multiple', 'attributes') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'id':
+          $params[$key] = $params['name'];
+          break;
+        case 'label_title':
+          $params[$key] = '';
+          break;
+        case 'options':
+          $params[$key] = array();
+          break;
+        case 'value':
+          $params[$key] = array();
+          break;
+        case 'force_assoc':
+        case 'disabled':
+        case 'mandatory':
+        case 'multiple':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  // Some checking that we're obeying the HTML5 rules.   A bit pedantic, but
+  // helps with debugging.  Only carry out these checks if we're going to be
+  // able to report them.
+  if (error_reporting() & E_USER_NOTICE)
+  {
+    if ((!isset($params['size']) || ($params['size'] == 1)) &&
+        $params['mandatory'] &&
+        !$params['multiple'])
+    {
+      if (count($params['options']) == 0)
+      {
+        $message =  "A select element with a required attribute and without a multiple " .
+                    "attribute, and whose size is 1, must have a child option element.";
+        trigger_error($message, E_USER_NOTICE);
+      }
+      else
+      {
+        $first_child = each($params['options']);
+        if (($first_child['key'] !== '') && ($first_child['value'] !== ''))
+        {
+          $message = "The first child option element of a select element with a required " .
+                     "attribute and without a multiple attribute, and whose size is 1, " .
+                     "must have either an empty value attribute, or must have no text content.";
+          trigger_error($message, E_USER_NOTICE);
+        }
+      }
+    }
+  }
+  
+  if (!is_array($params['value']))
+  {
+    $params['value'] = array($params['value']);
+  }
+  
+  if (isset($params['attributes']) && is_array($params['attributes']))
+  {
+    $params['attributes'] = implode(' ', $params['attributes']);
+  }
+  
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html = '';
+  if (isset($params['label']))
+  {
+    $html .= "<label for=\"" .$params['id'] . "\"";
+    $html .= (empty($params['label_title'])) ? '' : ' title="' . htmlspecialchars($params['label_title']) . '"';
+    $html .= ">" . $params['label'] . "</label>\n";
+  }
+  $html .= "<select id=\"" . $params['id'] . "\" name=\"" . $params['name'] . "\"";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : "";
+  $html .= ($params['mandatory']) ? " required aria-required=\"true\"" : "";
+  $html .= ($params['multiple']) ? " multiple" : "";
+  $html .= (isset($params['attributes'])) ? " " . $params['attributes'] : "";
+  $html .= ">\n";
+
+  foreach ($params['options'] as $value => $text)
+  {
+    // We can cope with both associative and ordinary arrays
+    if (!$params['force_assoc'] && !is_assoc($params['options']))
+    {
+      $value = $text;
+    }
+    $html .= "<option value=\"" . htmlspecialchars($value) . "\"";
+    $html .= (in_array($value, $params['value'])) ? " selected=\"selected\"" : '';
+    $html .= ">".htmlspecialchars($text)."</option>\n";
+  }
+
+  $html .= "</select>\n";
+  
+  // and hidden inputs if the select box is disabled
+  if ($params['disabled'] && $params['create_hidden'])
+  {
+    foreach ($params['value'] as $value)
+    {
+      $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\" value=\"".
+               htmlspecialchars($value)."\">\n";
+    }
+  }
+  
+  echo $html;
+}
+
+
+// Generates a datalist element with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'name'          The name of the element.
+//      OPTIONAL
+//        'id'            The id of the element.  Defaults to the same as the name.
+//        'label'         The text to be used for the field label.
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'options'       An array of options for the select element.   Can be a simple
+//                        array or an associative array with value => text members for
+//                        each <option> in the <select> element.   Default is an empty array.
+//        'force_assoc'   Boolean.  Forces the options array to be treated as an
+//                        associative array.  Default FALSE, ie it is treated as whatever
+//                        it looks like.  (This parameter is necessary because if you
+//                        index an array with strings that look like integers then PHP
+//                        casts the keys to integers and the array becomes a simple indexed array)
+//        'force_indexed' Boolean.  Forces the options array to be treated as a simple
+//                        indexed array, ie just the values are used and the keys are
+//                        ignored.   Default FALSE, ie it is treated as whatever it looks
+//                        like.
+//        'value'         The value of the input.  Default ''.
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//        'mandatory'     Whether the field is a required field.  Default FALSE
+//        'attributes'    Additional attributes not covered explicitly above.  Default NULL.
+//                        Can be either a simple string or an array of attributes.
+//
+function generate_datalist($params)
+{
+  global $HTTP_USER_AGENT;
+  
+  // some sanity checking on params
+  foreach (array('label', 'label_title', 'name', 'id', 'options', 'force_assoc',
+                 'force_indexed', 'value', 'disabled', 'create_hidden', 'mandatory',
+                 'attributes') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'id':
+          $params[$key] = $params['name'];
+          break;
+        case 'options':
+          $params[$key] = array();
+          break;
+        case 'value':
+        case 'label_title':
+          $params[$key] = '';
+          break;
+        case 'force_assoc':
+        case 'force_indexed':
+        case 'disabled':
+        case 'mandatory':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  if (isset($params['attributes']) && is_array($params['attributes']))
+  {
+    $params['attributes'] = implode(' ', $params['attributes']);
+  }
+  
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html = '';
+  if (isset($params['label']))
+  {
+    $html .= "<label for=\"" .$params['id'] . "\"";
+    $html .= (empty($params['label_title'])) ? '' : ' title="' . htmlspecialchars($params['label_title']) . '"';
+    $html .= ">" . $params['label'] . "</label>\n";
+  }
+  $html .= "<input id=\"" . $params['id'] . "\" name=\"" . $params['name'] . "\"";
+  $html .= " list=\"" . $params['id'] . "_options\"";
+  $html .= " value=\"" . $params['value'] . "\"";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : "";
+  $html .= ($params['mandatory']) ? " required aria-required=\"true\"" : "";
+  $html .= (isset($params['attributes'])) ? " " . $params['attributes'] : "";
+  // We normally have the autocomplete atribute set to off because in most browsers
+  // this stops the browser suggesting previous input and confines the list to our
+  // options.   However in Opera turning off autocomplete turns off our options as
+  // well, so we have to turn it on.  (We'll also turn it on for Opera in the JavaScript,
+  // for good measure, just in case the server isn't passing through the user agent).
+  $html .= " autocomplete=\"";
+  $html .= (strpos(strtolower($HTTP_USER_AGENT), 'opera') === FALSE) ? 'off' : 'on';
+  $html .= "\">\n";
+  $html .= "<datalist id=\"" . $params['id'] . "_options\">";
+  
+  // Put a <select> wrapper around the options so that browsers that don't
+  // support <datalist> will still have the options in their DOM and then
+  // the JavaScript polyfill can find them and do something with them
+  $html .= "<select style=\"display: none\">\n";
+
+  foreach ($params['options'] as $value => $text)
+  {
+    // We can cope with both associative and ordinary arrays
+    if (!$params['force_assoc'] && !is_assoc($params['options']))
+    {
+      $value = $text;
+    }
+    $html .= "<option";
+    if (!$params['force_indexed'])
+    {
+      $html .= " value=\"" . htmlspecialchars($value) . "\"";
+    }
+    $html .= ">" . htmlspecialchars($text) . "</option>\n";
+  }
+  $html .= "</select>\n";
+  $html .= "</datalist>\n";
+  
+  // and hidden inputs if the input is disabled
+  if ($params['disabled'] && $params['create_hidden'])
+  {
+      $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\" value=\"".
+               htmlspecialchars($params['value']) . "\">\n";
+  }
+  
+  echo $html;
+}
+
+
+// Generate a textarea with an associated label
+//
+//   $params    an associative array holding the function parameters:
+//      MANDATORY
+//        'label'         The text to be used for the field label.
+//        'name'          The name of the input.
+//      OPTIONAL
+//        'value'         The value of the input.  Default ''
+//        'label_title'   The text to be used for the title attribute for the field label
+//        'disabled'      Whether the field should be disabled.  Default FALSE
+//        'create_hidden' Boolean.  If TRUE hidden inputs are created if 'disabled' is set
+//                        Default TRUE
+//        'mandatory'     Whether the field is a required field.  Default FALSE
+//        'attributes'    Additional attributes not covered explicitly above.  Default NULL.
+//                        Can be either a simple string or an array of attributes.
+//
+function generate_textarea($params)
+{
+  // some sanity checking on params
+  foreach (array('label', 'label_title', 'name', 'value', 'disabled', 'create_hidden',
+                 'mandatory', 'attributes') as $key)
+  {
+    if (!isset($params[$key]))
+    {
+      switch ($key)
+      {
+        case 'label':
+        case 'name':
+          trigger_error('Missing mandatory parameters', E_USER_NOTICE);
+          break;
+        case 'value':
+        case 'label_title':
+          $params[$key] = '';
+          break;
+        case 'disabled':
+        case 'mandatory':
+          $params[$key] = FALSE;
+          break;
+        case 'create_hidden':
+          $params[$key] = TRUE;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  
+  if (isset($params['attributes']) && is_array($params['attributes']))
+  {
+    $params['attributes'] = implode(' ', $params['attributes']);
+  }
+  
+  // generate the HTML
+  // no HTML escaping for the label - it is trusted
+  $html  = "<label for=\"" . $params['name'] . "\"";
+  $html .= (empty($params['label_title'])) ? '' : ' title="' . htmlspecialchars($params['label_title']) . '"';
+  $html .= ">" . $params['label'] . "</label>\n";
+  // textarea rows and cols are overridden by CSS height and width
+  $html .= "<textarea id=\"" . $params['name'] . "\" name=\"" . $params['name'] . "\"";
+  $html .= (isset($params['attributes'])) ? " " . $params['attributes'] : "";
+  $html .= ($params['disabled']) ? " disabled=\"disabled\"" : '';
+  $html .= ($params['mandatory']) ? " required aria-required=\"true\"" : '';
+  $html .= ">" . htmlspecialchars($params['value']) . "</textarea>\n";
+  // and a hidden input if the textarea is disabled
+  if ($params['disabled'] && $params['create_hidden'])
+  {
+    $html .= "<input type=\"hidden\" name=\"" . $params['name'] . "\" value=\"".
+      htmlspecialchars($params['value'])."\">\n";
   }
   echo $html;
 }
@@ -548,110 +1378,61 @@ function genDateSelector($prefix, $day, $month, $year, $form_id='', $disabled=FA
   $month = (int) $month;
   $year = (int) $year;
   
-  // Get a month for use with JavaScript (where the months run from 0 to 11)
-  $month_js = $month - 1;
-  
   // First and last dates to show in year select
   $min = min($year, date("Y")) - $year_range['back'];
   $max = max($year, date("Y")) + $year_range['ahead'];
-  
-  $datepicker_baseid = "${prefix}datepicker";
   
   // We'll put the date selector in a span.    First of all we'll generate
   // day, month and year selectors.   These will be used if JavaScript is
   // disabled.    If JavaScript is enabled it will overwrite these with a
   // datepicker calendar.
-  echo "<span id=\"${prefix}dateselector\">\n";
+  echo "<span class=\"dateselector\"" .
+            " data-prefix=\"$prefix\"" .
+            " data-day=\"$day\"" .
+            " data-month=\"$month\"" .
+            " data-year=\"$year\"" .
+            " data-min-year=\"$min\"" .
+            " data-max-year=\"$max\"" .
+            " data-form-id=\"$form_id\">\n";
+            
   // the day selector
-  echo "<select name=\"${prefix}day\"" . 
-       ($disabled ? " disabled=\"disabled\"" : "") .
-       ">\n"; 
+  $options = array();
   for ($i = 1; $i <= 31; $i++)
   {
-    echo "<option" . ($i == $day ? " selected=\"selected\"" : "") . ">$i</option>\n";
+    $options[] = $i;
   }
-  echo "</select>\n";
+  $params = array('name'     => $prefix . 'day',
+                  'options'  => $options,
+                  'value'    => $day,
+                  'disabled' => $disabled);
+  generate_select($params);
+
   // the month selector
-  echo "<select name=\"${prefix}month\"" . 
-       ($disabled ? " disabled=\"disabled\"" : "") .
-       ">\n"; 
+  $options = array();
   for ($i = 1; $i <= 12; $i++)
   {
-    $m = utf8_strftime($strftime_format['mon'], mktime(0, 0, 0, $i, 1, $year));  
-    echo "<option value=\"$i\"" . ($i == $month ? " selected=\"selected\"" : "") . ">$m</option>\n";
+    $options[$i] = utf8_strftime($strftime_format['mon'], mktime(0, 0, 0, $i, 1, $year));
   }
-  echo "</select>\n";
+  $params = array('name'        => $prefix . 'month',
+                  'options'     => $options,
+                  'force_assoc' => TRUE,
+                  'value'       => $month,
+                  'disabled'    => $disabled);
+  generate_select($params);
+
   // the year selector
-  echo "<select name=\"${prefix}year\"" . 
-       ($disabled ? " disabled=\"disabled\"" : "") .
-       ">\n";
+  $options = array();
   for ($i = $min; $i <= $max; $i++)
   {
-    echo "<option value=\"$i\"" . ($i == $year ? " selected=\"selected\"" : "") . ">$i</option>\n";
+    $options[] = $i;
   }
-  echo "</select>\n";
-  // If the select is disabled we'll still pass through the values as hidden inputs
-  if ($disabled)
-  {
-    echo "<input type=\"hidden\" name=\"${prefix}day\" value=\"$day\">\n";
-    echo "<input type=\"hidden\" name=\"${prefix}month\" value=\"$month\">\n";
-    echo "<input type=\"hidden\" name=\"${prefix}year\" value=\"$year\">\n";
-  }
-  echo "</span>\n";
-  
-  // Now use JavaScript to overwrite the contents of this span with a datepicker calendar
-  ?>
-  <script type="text/javascript">
+  $params = array('name'     => $prefix . 'year',
+                  'options'  => $options,
+                  'value'    => $year,
+                  'disabled' => $disabled);
+  generate_select($params);
 
-  $(function() {
-    $("#<?php echo $datepicker_baseid ?>").datepicker({yearRange: <?php echo "'$min:$max'" ?>,
-                                                       altField: '#<?php echo $datepicker_baseid ?>_alt'
-                                                       <?php
-                                                       if (!empty($form_id))
-                                                       {
-                                                         echo ", onClose: function(dateText, inst) {datepicker_close(dateText, inst, '$form_id');}";
-                                                       }
-                                                       if ($disabled)
-                                                       {
-                                                         echo ", disabled: true";
-                                                       }
-                                                       ?>
-                                                      });
-    <?php
-    // Populate the input fields with the initial values
-    ?>
-    var initial_date = new Date(<?php echo "$year, $month_js, $day" ?>);
-    var dateFormat = $("#<?php echo $datepicker_baseid ?>").datepicker( "option", "dateFormat" );
-    document.getElementById(<?php echo "'${datepicker_baseid}'" ?>).value = $.datepicker.formatDate(dateFormat, initial_date);
-    document.getElementById(<?php echo "'${datepicker_baseid}_alt_day'" ?>).value = <?php echo $day ?>;
-    document.getElementById(<?php echo "'${datepicker_baseid}_alt_month'" ?>).value = <?php echo $month ?>;
-    document.getElementById(<?php echo "'${datepicker_baseid}_alt_year'" ?>).value = <?php echo $year ?>;
-    $(".ui-datepicker").draggable();
-  });
- 
-  
-  var dateselector = document.getElementById(<?php echo "'${prefix}dateselector'" ?>);
-  var datepicker_html = '<input class="date" type="text" id="<?php echo $datepicker_baseid ?>">\n';
-  <?php
-  // The next input is disabled because we don't need to pass the value through to
-  // the form and we don't want the value cluttering up the URL (if it's a GET).
-  // It's just used as a holder for the date in a known format so that it can
-  // then be used by datepicker_close() to populate the following three inputs.
-  ?>
-  datepicker_html += '<input type="hidden" id="<?php echo $datepicker_baseid ?>_alt"'
-  datepicker_html += ' name="<?php echo $prefix ?>_alt"';
-  datepicker_html += ' value="<?php echo "${year}-${month}-${day}" ?>"';
-  datepicker_html += ' disabled="disabled">\n';
-  <?php
-  // These three inputs we do want
-  ?>
-  datepicker_html += '<input type="hidden" id="<?php echo $datepicker_baseid ?>_alt_day" name="<?php echo $prefix ?>day">\n';
-  datepicker_html += '<input type="hidden" id="<?php echo $datepicker_baseid ?>_alt_month" name="<?php echo $prefix ?>month">\n';
-  datepicker_html += '<input type="hidden" id="<?php echo $datepicker_baseid ?>_alt_year" name="<?php echo $prefix ?>year">\n';
-  dateselector.innerHTML = datepicker_html;
-  
-  </script>
-  <?php
+  echo "</span>\n";
 }
 
 // Error handler - this is used to display serious errors such as database
@@ -900,7 +1681,7 @@ function get_area_settings($area)
     $max_per_interval_area[$interval_type] = $$var;
   }
   
-  // If we're using periods then set the rsolution to 60 seconds
+  // If we're using periods then set the resolution to 60 seconds
   if ($enable_periods)
   {
     $resolution = 60;
@@ -940,12 +1721,16 @@ function some_area($field, $enabled=FALSE)
 }
 
 // Get the local day name based on language. Note 2000-01-02 is a Sunday.
-function day_name($daynumber)
+function day_name($daynumber, $format=NULL)
 {
   global $strftime_format;
   
-  return utf8_strftime($strftime_format['dayname'],
-                       mktime(0,0,0,1,2+$daynumber,2000));
+  if (!isset($format))
+  {
+    $format = $strftime_format['dayname'];
+  }
+  
+  return utf8_strftime($format, mktime(0,0,0,1,2+$daynumber,2000));
 }
 
 // Returns a list of repeat days as a string (eg "Thursday Friday")
@@ -982,6 +1767,24 @@ function hour_min_format()
     return $strftime_format['time12'];
   }
 }
+
+
+// Returms a string representing the hour and minute for the nominal
+// seconds since the start of the day, $s
+function hour_min($s)
+{
+  $following_day = ($s >= SECONDS_PER_DAY);
+  $s = $s % SECONDS_PER_DAY;  // in case $s is on the next day
+  // Choose a day that doesn't have any DST transitions in any timezone
+  $t = mktime(0, 0, $s, 1, 1, 2000);
+  $result = utf8_strftime(hour_min_format(), $t);
+  if ($following_day)
+  {
+    $result = "* " . $result;
+  }
+  return $result;
+}
+
 
 function period_date_string($t, $mod_time=0)
 {
@@ -1144,6 +1947,7 @@ function round_t_down($t, $resolution, $am7)
                             % $resolution);
 }
 
+
 // Round time up to the nearest resolution
 function round_t_up($t, $resolution, $am7)
 {
@@ -1157,6 +1961,42 @@ function round_t_up($t, $resolution, $am7)
     return $t;
   }
 }
+
+
+// Returns the nominal (ie ignoring DST transitions) seconds since the start of
+// the calendar day on the start of the booking day
+function nominal_seconds($t)
+{
+  global $morningstarts, $morningstarts_minutes;
+  
+  $date = getdate($t);
+  // check to see if the time is really on the next day
+  if (hm_before($date,
+                array('hours' => $morningstarts, 'minutes' => $morningstarts_minutes)))
+  {
+    $date['hours'] += 24;
+  }
+  return (($date['hours'] * 60) + $date['minutes']) * 60;
+}
+
+
+// Returns the index of the period represented by $s nominal seconds
+function period_index($s)
+{
+  // Periods are counted as minutes from noon, ie 1200 is $period[0],
+  // 1201 $period[1], etc.
+  return intval($s/60) - (12*60);
+}
+
+
+// Returns the name of the period represented by nominal seconds $s
+function period_name($s)
+{
+  global $periods;
+  
+  return $periods[period_index($s)];
+}
+
 
 // generates some html that can be used to select which area should be
 // displayed.
@@ -1217,7 +2057,7 @@ function make_room_select_html ($link, $area, $current, $year, $month, $day)
   global $tbl_room, $tbl_area, $area_list_format;
   
   $out_html = '';
-  $sql = "SELECT R.id, R.room_name
+  $sql = "SELECT R.id, R.room_name, R.description
             FROM $tbl_room R, $tbl_area A
            WHERE R.area_id=$area
              AND R.area_id=A.id
@@ -1240,7 +2080,7 @@ function make_room_select_html ($link, $area, $current, $year, $month, $day)
       for ($i = 0; ($row = sql_row_keyed($res, $i)); $i++)
       {
         $selected = ($row['id'] == $current) ? "selected=\"selected\"" : "";
-        $out_html .= "<option $selected value=\"". $row['id']. "\">" . htmlspecialchars($row['room_name']) . "</option>\n";
+        $out_html .= "<option $selected value=\"". $row['id']. "\" title=\"". htmlspecialchars($row['description'])."\">" . htmlspecialchars($row['room_name']) . "</option>\n";
       }
       // Note:  the submit button will not be displayed if JavaScript is enabled
       $out_html .= "</select>\n" .
@@ -1257,7 +2097,7 @@ function make_room_select_html ($link, $area, $current, $year, $month, $day)
       $out_html .= "<ul>\n";
       for ($i = 0; ($row = sql_row_keyed($res, $i)); $i++)
       {
-        $out_html .= "<li><a href=\"$link?year=$year&amp;month=$month&amp;day=$day&amp;area=$area&amp;room=".$row['id']."\">";
+        $out_html .= "<li><a href=\"$link?year=$year&amp;month=$month&amp;day=$day&amp;area=$area&amp;room=".$row['id']."\" title=\"". htmlspecialchars($row['description'])."\">";
         $out_html .= "<span" . (($row['id'] == $current) ? ' class="current"' : '') . ">";
         $out_html .= htmlspecialchars($row['room_name']) . "</span></a></li>\n";
       }
@@ -1285,7 +2125,7 @@ function day_of_MRBS_week($time)
 // hour is added so that this function can when necessary only be
 // run if the time is between midnight and 3am (all DST changes
 // occur in this period.
-function is_dst ( $month, $day, $year, $hour="-1" )
+function is_dst($month, $day, $year, $hour="-1")
 {
   if ( $hour != -1  && $hour > 3)
   {
@@ -1311,24 +2151,204 @@ function is_dst ( $month, $day, $year, $hour="-1" )
   }
 }
 
-// if crossing dst determine if you need to make a modification
-// of 3600 seconds (1 hour) in either direction
-function cross_dst ( $start, $end )
-{
-  // entering DST
-  if ( !date( "I", $start) &&  date( "I", $end))
-  {
-    $modification = -3600;
-  }
 
-  // leaving DST
-  else if(  date( "I", $start) && !date( "I", $end))
+// Compares two nominal dates which are indexed by'hours', 'minutes', 'seconds', 
+// 'mon', 'mday' and 'year', ie as in the ouput of getdate().  Returns -1 if the
+// first date is before the second, 0 if they are equal and +1 if the first date
+// is after the second.   NULL if a comparison can't be done.
+//
+// (Note that internally the function uses gmmktime() so the parameters do not
+// have to represent valid values.   For example you could pass '32' for day and
+// that would be interpreted as 4 days after '28'.)
+function nominal_date_compare($d1, $d2)
+{
+  // We compare the dates using gmmktime() because we are trying to compare nominal
+  // dates and so do not want DST transitions
+  $t1 = gmmktime($d1['hours'], $d1['minutes'], $d1['seconds'],
+                 $d1['mon'], $d1['mday'], $d1['year']);
+  $t2 = gmmktime($d2['hours'], $d2['minutes'], $d2['seconds'],
+                 $d2['mon'], $d2['mday'], $d2['year']);
+  if ($t1 < $t2)
   {
-    $modification = 3600;
+    return -1;
+  }
+  elseif ($t1 == $t2)
+  {
+    return 0;
   }
   else
   {
-    $modification = 0;
+    return 1;
+  }
+}
+
+
+// Determines whether there's a possibility that the interval between the two Unix 
+// timestamps could contain nominal times that don't exist, for example from 0100 to
+// 0159 in Europe/London when entering DST.
+function is_possibly_invalid($start, $end)
+{
+  // We err on the side of caution by widening the interval by a day at each end.   This
+  // allows for the possibility that the start or end times have been calculated by using
+  // mktime() on an invalid time!
+  return (cross_dst($start - 86400, $end + 86400) < 0);
+}
+
+
+// Checks whether the nominal time given is an invalid date and time with respect to
+// DST transitions.   When entering DST there is a set of times that don't exist, for
+// example from 0100 to 0159 in Europe/London.
+// Returns NULL if MRBS is unable to determine an answer, otherwise TRUE or FALSE (so
+// a simple equality test will default to a valid time if MRBS can't determine an answer)
+function is_invalid_datetime($hour, $minute, $second, $month, $day, $year, $tz=NULL)
+{
+  global $timezone;
+
+  // Do a quick check to see if there's a possibility of an invalid time by checking
+  // whether there's a transition into DST from the day before to the day after
+  if (!function_exists('date_default_timezone_set'))
+  {
+    return NULL;
+  }
+  
+  if (empty($tz))
+  {
+    $tz = $timezone;  // default to the current timezone
+  }
+  
+  $old_tz = date_default_timezone_get();  // save the current timezone
+  date_default_timezone_set($tz);
+  
+  // If the day before is in DST then the datetime must be valid, because
+  // you only get the gap when entering DST.
+  $dayBefore = mktime($hour, $minute, $second, $month, $day-1, $year);
+  if (date('I', $dayBefore))
+  {
+    $result = FALSE;
+  }
+  else
+  {
+    // The day before is not in DST.   If the day after is also not in DST,
+    // then there can have been no transition, so again the datetime must be valid.
+    $dayAfter = mktime($hour, $minute, $second, $month, $day+1, $year);
+    if (!date('I', $dayAfter))
+    {
+      $result = FALSE;
+    }
+    else
+    {
+      // We are in a transition into DST, so we need to check more carefully.
+      // However we can only do this efficiently in PHP 5.3.0 or greater
+      if (version_compare(PHP_VERSION, '5.3.0') < 0)
+      {
+        $result = NULL;
+      }
+      else
+      {
+        $thisDateTimeZone = new DateTimeZone($tz);
+        // Get the transition data (we assume there is one and only one transition),
+        // in particular the time at which the transition happens and the new offset
+        $transitions = $thisDateTimeZone->getTransitions($dayBefore, $dayAfter);
+        // According to my reading of the PHP manual, getTransitions() should return
+        // all transitions between the start and end date.   However what it seems to do
+        // is return an array consisting of the time data for the start date followed by
+        // the transition data.   So as a precaution we take the last element of the array
+        // (we were only expecting one element, but seem to get two).
+        $transition = array_pop($transitions);
+        // If we failed for some reason to get any transition data, return NULL
+        if (!isset($transition))
+        {
+          $result = NULL;
+        }
+        else
+        {
+          // Get the old offset and work out how many seconds the clocks change by
+          $beforeDateTime = new DateTime(date('c', $dayBefore), $thisDateTimeZone);
+          $change = $transition['offset'] - $beforeDateTime->getOffset();
+  
+          // See if the nominal date falls outside the gap
+          $lastValidSecond = getdate($transition['ts'] - 1);
+          $lastInvalidSecond = $lastValidSecond;
+          $lastInvalidSecond['seconds'] += $change;
+          $thisDate = array('hours' => $hour, 'minutes' => $minute, 'seconds' => $second,
+                            'mon' => $month, 'mday' => $day, 'year' => $year);
+                  
+          $result = ((nominal_date_compare($thisDate, $lastValidSecond) > 0) && 
+                     (nominal_date_compare($thisDate, $lastInvalidSecond) <= 0));
+        }
+      }
+    }
+  }
+  
+  date_default_timezone_set($old_tz);  // restore the old timezone
+  
+  return $result;
+}
+
+
+// Returns TRUE if $t is in that part of daylight saving time that will have
+// the same nominal time as another timestamp shortly after the DST transition.
+// For example, will return TRUE for the $t equivalent to the first occurence
+// of 0230 on Sunday 27th October 2013 in timezone Europe/London
+function is_dst_first_duplicate($t)
+{
+  if (date('I', $t))
+  {
+    $change = cross_dst($t, $t+SECONDS_PER_DAY);
+    return !date('I', $t + $change);
+  }
+  return false;
+}
+
+
+// A PHP version independent version of mktime().   (The $is_dst parameter
+// became deporecated at PHP 5.1.0)
+function mrbs_mktime($hour, $minute, $second, $month, $day, $year)
+{
+  if (version_compare(PHP_VERSION, '5.1.0') >= 0)
+  {
+    return mktime($hour, $minute, $second, $month, $day, $year);
+  }
+  else
+  {
+    return mktime($hour, $minute, $second, $month, $day, $year,
+                  is_dst($month, $day, $year, $hour));
+  }
+}
+
+// returns the modification (in seconds) necessary on account of any DST
+// transitions when going from $start to $end
+function cross_dst($start, $end)
+{
+  global $timezone;
+  
+  // Ideally we calculate the modification using the DateTimeZone information
+  // in PHP, because not all DST transitions are 1 hour.  For example, Lord Howe
+  // Island in Australia has a 30 minute transition
+  if (class_exists('DateTimeZone'))
+  {
+    $thisDateTimeZone = new DateTimeZone($timezone);
+    $startDateTime = new DateTime(date('c', $start), $thisDateTimeZone);
+    $endDateTime = new DateTime(date('c', $end), $thisDateTimeZone);
+    $modification = $startDateTime->getOffset() - $endDateTime->getOffset();
+  }
+  // Otherwise we have to assume that the transition is 1 hour.
+  else
+  {
+    // entering DST
+    if (!date( "I", $start) &&  date( "I", $end))
+    {
+      $modification = -SECONDS_PER_HOUR;
+    }
+    // leaving DST
+    else if (date( "I", $start) && !date( "I", $end))
+    {
+      $modification = SECONDS_PER_HOUR;
+    }
+    else
+    {
+      $modification = 0;
+    }
   }
 
   return $modification;
@@ -1405,7 +2425,7 @@ function working_time_diff($now, $then)
   // First let's calculate (a)
   $last = mktime(12, 0, 0, date('n', $last), date('j', $last), date('Y', $last));
   $first = mktime(12, 0, 0, date('n', $first), date('j', $first), date('Y', $first));
-  $days_diff = (int) round(($last - $first)/(60*60*24));  // the difference in days
+  $days_diff = (int) round(($last - $first)/SECONDS_PER_DAY);  // the difference in days
   $whole_weeks = (int) floor($days_diff/7);  // the number of whole weeks between the two
   $non_working_days = $whole_weeks * (7 - $n_working_days);
   // Now (b), ie we just have to calculate how many non-working days there are between the two
@@ -1423,7 +2443,7 @@ function working_time_diff($now, $then)
   }
 
   // So now subtract the number of weekend seconds
-  $diff = $diff - ($non_working_days * 60*60*24);
+  $diff = $diff - ($non_working_days * SECONDS_PER_DAY);
   
   // Finally reverse the difference if $now was in fact before $then
   if ($now < $then)

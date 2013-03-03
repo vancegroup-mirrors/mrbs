@@ -7,6 +7,11 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(0); // Cannot cache file because it depends on $HTTP_REFERER
 
+if ($use_strict)
+{
+  echo "'use strict';\n";
+}
+
 // =================================================================================
 
 // Extend the init() function 
@@ -18,7 +23,7 @@ init = function(args) {
 
   <?php // Turn the list of users into a dataTable ?>
   
-  var tableOptions = new Object();
+  var tableOptions = {};
   <?php
   // Use an Ajax source if we can - gives much better performance for large tables
   if (function_exists('json_encode'))
@@ -27,15 +32,17 @@ init = function(args) {
     {
       list( ,$query_string) = explode('?', $HTTP_REFERER, 2);
     }
-    $ajax_url = "edit_users.php?" . (empty($query_string) ? '' : '&') . "ajax=1";
+    $ajax_url = "edit_users.php?" . (empty($query_string) ? '' : "$query_string&") . "ajax=1";
     ?>
     tableOptions.sAjaxSource = "<?php echo $ajax_url ?>";
     <?php
   }
+
+  // Get the sTypes and feed those into dataTables
   ?>
-  <?php // The Rights column has a span with title for sorting ?>
-  tableOptions.aoColumnDefs = [{"sType": "title-numeric", "aTargets": [1]}]; 
+  tableOptions.aoColumnDefs = getSTypes($('#users_table'));
   var usersTable = makeDataTable('#users_table',
                                  tableOptions,
                                  {sWidth: "relative", iWidth: 33});
-}
+};
+

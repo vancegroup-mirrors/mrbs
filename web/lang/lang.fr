@@ -79,14 +79,10 @@ $vocab["rep_type_1"]         = "Jour";
 $vocab["rep_type_2"]         = "Semaine";
 $vocab["rep_type_3"]         = "Mois";
 $vocab["rep_type_4"]         = "Année";
-$vocab["rep_type_5"]         = "Mois, même jour semaine";
-$vocab["rep_type_6"]         = "toutes les n semaines";
 $vocab["rep_end_date"]       = "Date de fin de périodicité&nbsp;";
 $vocab["rep_rep_day"]        = "Jour&nbsp;";
-$vocab["rep_for_weekly"]     = "(pour n-semaines)";
 $vocab["rep_freq"]           = "Fréquence&nbsp;";
 $vocab["rep_num_weeks"]      = "Intervalle de semaines";
-$vocab["rep_for_nweekly"]    = "(pour n-semaines)";
 $vocab["skip_conflicts"]     = "Ignorer les conflits";
 $vocab["ctrl_click"]         = "CTRL + clic souris pour sélectionner plusieurs salles";
 $vocab["entryid"]            = "Réservation N°";
@@ -268,6 +264,7 @@ $vocab["total"]                 = "Total";
 $vocab["submitquery"]           = "Afficher le rapport";
 $vocab["sort_rep"]              = "Trier par&nbsp;";
 $vocab["sort_rep_time"]         = "Date/Heure";
+$vocab["sort_room"]             = "Salle";
 $vocab["fulldescription_short"] = "Description complète";
 $vocab["both"]                  = "Tous";
 $vocab["privacy_status"]        = "Etat caractère privé";
@@ -275,7 +272,7 @@ $vocab["search_criteria"]       = "Critères de recherche";
 $vocab["presentation_options"]  = "Options de présentation";
 $vocab["delete_entries"]        = "Supprimer des réservations";
 $vocab["delete_entries_warning"] = "ATTENTION!  Cette action va supprimer les réservations " .
-                                   "correspondantes à la recherche.  Cette opération n'est pas REVERSIBLE !!!" .
+                                   "correspondantes à la recherche.  Cette opération n'est pas REVERSIBLE !!! " .
                                    "Etes vous certain de vouloir supprimer les réservations ?\n\n" .
                                    "Nombre de réservations à supprimer définitivement : ";
 $vocab["delete_entries_failed"] = "Les réservations ne peuvent pas être supprimées.";
@@ -348,7 +345,7 @@ $vocab["enable_reminders"]        = "Autoriser les utilisateurs à rappeler aux 
 $vocab["private_settings"]        = "Réservations privées";
 $vocab["allow_private"]           = "Autoriser les réservations privées";
 $vocab["force_private"]           = "Forcer les réservations privées";
-$vocab["default_settings"]        = "paramètres par défaut";
+$vocab["default_settings"]        = "Paramètres par défaut";
 $vocab["default_private"]         = "Privée";
 $vocab["default_public"]          = "Publique";
 $vocab["private_display"]         = "Réservations privées (affichage)";

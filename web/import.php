@@ -21,7 +21,7 @@ function get_room_id($location, &$error)
     $location_area = '';
     $location_room = $location;
   }
-  elseif ($area_room_order = 'area_room')
+  elseif ($area_room_order == 'area_room')
   {
     list($location_area, $location_room) = explode($area_room_delimiter, $location);
   }
@@ -168,11 +168,30 @@ function process_event($vevent)
   // for calculating some of the other settings
   $properties = array();
   $problems = array();
-  foreach ($vevent as $line)
+
+  $line = current($vevent);
+  while ($line !== FALSE)
   {
     $property = parse_ical_property($line);
-    $properties[$property['name']] = array('params' => $property['params'],
-                                           'value' => $property['value']);
+    // Ignore any sub-components (eg a VALARM inside a VEVENT) as MRBS does not
+    // yet handle things like reminders.  Skip through to the end of the sub-
+    // component.   Just in case you can have sub-components at a greater depth
+    // than 1 (not sure if you can), make sure we've got to the matching END.
+    if ($property['name'] != 'BEGIN')
+    {
+      $properties[$property['name']] = array('params' => $property['params'],
+                                             'value' => $property['value']);
+    }
+    else
+    {
+      $component = $property['value'];
+      while (!(($property['name'] == 'END') && ($property['value'] == $component)) &&
+             ($line = next($vevent)))
+      {
+        $property = parse_ical_property($line);;
+      }
+    }
+    $line = next($vevent);
   }
   // Get the start time because we'll need it later
   if (!isset($properties['DTSTART']))
@@ -300,8 +319,7 @@ function process_event($vevent)
     $y = $date['year'];
     $am7 = mktime($room_settings[$booking['room_id']]['morningstarts'],
                   $room_settings[$booking['room_id']]['morningstarts_minutes'],
-                  0, $m, $d, $y,
-                  is_dst($m, $d, $y, $room_settings[$booking['room_id']]['morningstarts']));
+                  0, $m, $d, $y);
     $booking['start_time'] = round_t_down($booking['start_time'],
                                           $room_settings[$booking['room_id']]['resolution'],
                                           $am7);
@@ -438,7 +456,7 @@ if (!empty($import))
             $vevent = array();
             while (($vevent_line = array_shift($lines)) && ($vevent_line != "END:VEVENT"))
             {
-                $vevent[] = $vevent_line;
+              $vevent[] = $vevent_line;
             }
             $vevents[] = $vevent;
           }
@@ -473,7 +491,7 @@ echo "<p>\n" . get_vocab("import_intro") . "</p>\n";
   
 echo "<div>\n";
 echo "<label for=\"ics_file\">" . get_vocab("file_name") . ":</label>\n";
-echo "<input type=\"file\" name=\"ics_file\" id=\"ics_file\">\n";
+echo "<input type=\"file\" accept=\"text/calendar\" name=\"ics_file\" id=\"ics_file\">\n";
 echo "</div>\n";
 
 echo "<fieldset>\n";

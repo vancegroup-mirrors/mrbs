@@ -19,28 +19,24 @@ $standard_query_string = "area=$area";
 //   - Draggable
 //   - Resizable
 //   - Autocomplete
-//   - Dialog
-//   - Tabs
+//   - Button
 //   - Datepicker
+//   - Dialog
+//   - Menu
+//   - Tabs
 //   - Sunny theme
 // If you need any other components you will need to rebuild the custom UI library
 // See http://jqueryui.com/
 ?>
     
-<script type="text/javascript" src="jquery/jquery-1.6.4.min.js"></script>
-<script type="text/javascript" src="jquery/ui/jquery-ui-1.8.16.custom.min.js"></script>
+<script type="text/javascript" src="jquery/jquery-1.8.2.min.js"></script>
+<script type="text/javascript" src="jquery/ui/jquery-ui-1.9.1.custom.min.js"></script>
 <script type="text/javascript" src="jquery/ui/jquery-ui-i18n.js"></script>
 <?php
-// The English (-en) and English-US (-en-US) files are non-standard additions,
-// which do not exist explicitly.   Although datepicker defaults to US English, it
-// helps when choosing the regional settings to have explicit settings.  A ticket
-// (#6682) has been raised to request their inclusion.    The files have been kept
-// separate to avoid problems with merging new releases of UI.
-//
+// Extra regional settings for the jQuery UI datepicker
 ?>
-<script type="text/javascript" src="jquery/ui/jquery-ui-datepicker-en.js"></script>
-<script type="text/javascript" src="jquery/ui/jquery-ui-datepicker-en-US.js"></script>
-     
+<script type="text/javascript" src="jquery/ui/jquery-ui-i18n.MRBS.js"></script>
+
 <?php // Work out if we're using IE6 or below ?>
 <script type="text/javascript">
   //<![CDATA[
@@ -94,6 +90,14 @@ $standard_query_string = "area=$area";
   }
   //]]>
 </script>
+
+<?php
+// All pages
+?>
+<script type="text/javascript" src="js/functions.js.php?<?php echo $standard_query_string ?>"></script>
+<script type="text/javascript" src="js/datepicker.js.php?<?php echo $standard_query_string ?>"></script>
+<script type="text/javascript" src="js/general.js.php?<?php echo $standard_query_string ?>"></script>
+
     
 <?php
 // dataTables initialisation
@@ -146,10 +150,11 @@ if (file_exists("js/$page.js.php"))
 }
     
     
-// We need the resizable booking and the multiple bookings code for the day and week pages
+// We need the resizable booking, multiple bookings and refresh code for the day and week pages
 if (in_array($page, array('day', 'week')))
 {
   ?>
+  <script type="text/javascript" src="js/refresh.js.php?<?php echo $standard_query_string ?>"></script>
   <script type="text/javascript" src="js/resizable.js.php?<?php echo $standard_query_string ?>"></script>
   <script type="text/javascript" src="js/multiple.js.php?<?php echo $standard_query_string ?>"></script>
   <?php
@@ -161,13 +166,7 @@ if (in_array($page, array('day', 'week', 'month')))
   <script type="text/javascript" src="js/cell_click.js.php?<?php echo $standard_query_string ?>"></script>
   <?php
 }
-    
-    
-// All pages
-?>
-<script type="text/javascript" src="js/functions.js.php?<?php echo $standard_query_string ?>"></script>
-<script type="text/javascript" src="js/datepicker.js.php?<?php echo $standard_query_string ?>"></script>
-<script type="text/javascript" src="js/general.js.php?<?php echo $standard_query_string ?>"></script>
+?>  
     
 <script type="text/javascript">
 
@@ -185,6 +184,16 @@ $(window).load(function() {
               area: '<?php echo $area?>',
               room: '<?php echo $room?>',
               page: '<?php echo $page?>'};
+  <?php
+  // We need $timetohighlight for the day and week pages
+  $timetohighlight = get_form_var('timetohighlight', 'int');
+  if (isset($timetohighlight))
+  {
+    ?>
+    args.timetohighlight = '<?php echo $timetohighlight?>';
+    <?php
+  }
+  ?>
   init(args);
 
 });

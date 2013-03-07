@@ -99,7 +99,7 @@ function sql_mysqli_query1 ($sql, $db_conn = null)
 
 // Execute an SQL query. Returns a database-dependent result handle,
 // which should be passed back to sql_row or sql_row_keyed to get the results.
-// Returns 0 on error; use sql_error to get the error message.
+// Returns FALSE on error; use sql_error to get the error message.
 function sql_mysqli_query ($sql, $db_conn = null)
 {
   sql_mysqli_ensure_handle($db_conn);
@@ -210,8 +210,16 @@ function sql_mysqli_mutex_lock($name, $db_conn = null)
   sql_mysqli_ensure_handle($db_conn);
 
   global $sql_mutex_shutdown_registered, $sql_mutex_unlock_name;
-  if (!sql_mysqli_query1("SELECT GET_LOCK('$name', 20)", $db_conn))
+  
+  $r = sql_mysqli_query("SELECT GET_LOCK('$name', 20)", $db_conn);
+  if (!$r)
   {
+    // Distinguish between a timeout (GET_LOCK returns 0)
+    // and an error (GET_LOCK returns NULL)
+    if (!isset($r))
+    {
+      trigger_error(sql_mysqli_error($db_conn), E_USER_WARNING);
+    }
     return 0;
   }
   $sql_mysqli_mutex_unlock_name = $name;
@@ -280,6 +288,9 @@ function sql_mysqli_syntax_timestamp_to_unix($fieldname, $db_conn = null)
 
 // Returns the syntax for a case sensitive string "equals" function
 // (By default MySQL is case insensitive, so we force a binary comparison)
+// NB:  This function is also assumed to do a strict comparison, ie
+// take account of training spaces.  (The '=' comparison in MySQL allows
+// trailing spaces, eg 'john' = 'john ').
 function sql_mysqli_syntax_casesensitive_equals($fieldname, $s, $db_conn = null)
 {
   sql_mysqli_ensure_handle($db_conn);

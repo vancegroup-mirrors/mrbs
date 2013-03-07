@@ -7,6 +7,10 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(60*30); // 30 minute expiry
 
+if ($use_strict)
+{
+  echo "'use strict';\n";
+}
 
 // Set the default values for datepicker, including the default regional setting
 ?>
@@ -32,8 +36,11 @@ $(function() {
   
   $default_lang = locale_format($default_language_tokens, '-');
   
+  // Note that we use [''] rather than dot notation for the regional settings because
+  // settings such as 'en-US' would break dot notation.
   echo "$.datepicker.setDefaults($.datepicker.regional['$default_lang']);\n";
-  $datepicker_langs = $langs;
+  $datepicker_langs = get_language_qualifiers();
+  $datepicker_langs = alias_qualifiers($datepicker_langs);
   asort($datepicker_langs, SORT_NUMERIC);
   foreach ($datepicker_langs as $lang => $qual)
   {
@@ -89,7 +96,7 @@ $(function() {
     showWeek: <?php echo ($view_week_number) ? 'true' : 'false' ?>,
     firstDay: <?php echo $weekstarts ?>,
     altFormat: 'yy-mm-dd',
-    onClose: function(dateText, inst) {datepicker_close(dateText, inst);}
+    onSelect: function(dateText, inst) {datepickerSelect(dateText, inst);}
   });
 });
 
@@ -103,16 +110,16 @@ $(function() {
 // (datepicker can only have one alternate field, which is why we need to write
 // to the three fields ourselves).
 //
-// Blur the datepicker input field on close, so that the datepicker will reappear
+// Blur the datepicker input field on select, so that the datepicker will reappear
 // if you select it.    (Not quite sure why you need this.  It only seems
 // to be necessary when you are using Firefox and the datepicker is draggable).
+
+// If formId is defined, submit the form
 //
-// Then go and adjust the start and end time/period select options, because
-// they are dependent on the start and end dates
-//
-// Finally, if formId is defined, submit the form
+// Finally, trigger a datePickerUpdated event so that it can be dealt with elsewhere
+// by code that relies on having updated values in the alt fields
 ?>
-function datepicker_close(dateText, inst, formId)
+function datepickerSelect(dateText, inst, formId)
 {
   var alt_id = inst.id + '_alt';
   var date = document.getElementById(alt_id).value.split('-');
@@ -120,23 +127,92 @@ function datepicker_close(dateText, inst, formId)
   document.getElementById(alt_id + '_month').value = date[1];
   document.getElementById(alt_id + '_day').value   = date[2];
   document.getElementById(inst.id).blur();
-  if ($('body').hasClass('edit_entry'))
-  {
-    adjustSlotSelectors(document.getElementById('main'));
-    <?php
-    if (function_exists('json_encode'))
-    {
-      // If we're doing Ajax checking of the form then we have to check
-      // for conflicts the form when the datepicker is closed
-      ?>
-      checkConflicts();
-      <?php
-    }
-    ?>
-  }
+  
   if (formId)
   {
     var form = document.getElementById(formId);
     form.submit();
   }
+  
+  $('#' + inst.id).trigger('datePickerUpdated');
 }
+
+<?php
+// =================================================================================
+
+// Extend the init() function 
+?>
+
+var oldInitDatepicker = init;
+init = function() {
+  oldInitDatepicker.apply(this);
+
+  <?php
+  // Overwrite the date selectors with a datepicker
+  ?>
+  $('span.dateselector').each(function() {
+      var span = $(this);
+      var prefix  = span.data('prefix'),
+          minYear = span.data('minYear'),
+          maxYear = span.data('maxYear'),
+          formId  = span.data('formId');
+      var dateData = {day:   parseInt(span.data('day'), 10),
+                      month: parseInt(span.data('month'), 10),
+                      year:  parseInt(span.data('year'), 10)};
+      var unit;
+      var initialDate = new Date(dateData.year,
+                                 dateData.month - 1,  <?php // JavaScript months run from 0 to 11 ?>
+                                 dateData.day);
+      var disabled = span.find('select').first().is(':disabled'),
+          baseId = prefix + 'datepicker';
+      
+      span.empty();
+
+      <?php
+      // The next input is disabled because we don't need to pass the value through to
+      // the form and we don't want the value cluttering up the URL (if it's a GET).
+      // It's just used as a holder for the date in a known format so that it can
+      // then be used by datepickerSelect() to populate the following three inputs.
+      ?>
+      $('<input>').attr('type', 'hidden')
+                  .attr('id', baseId + '_alt')
+                  .attr('name', prefix + '_alt')
+                  .attr('disabled', 'disabled')
+                  .val(dateData.year + '-' + dateData.month + '-' + dateData.day)
+                  .appendTo(span);
+      <?php
+      // These three inputs (day, week, month) we do want
+      ?>
+      for (unit in dateData)
+      {
+        if (dateData.hasOwnProperty(unit))
+        {
+          $('<input>').attr('type', 'hidden')
+                      .attr('id', baseId + '_alt_' + unit)
+                      .attr('name', prefix + unit)
+                      .val(dateData[unit])
+                      .appendTo(span);
+        }
+      }
+      <?php // Finally the main datepicker field ?>
+      $('<input>').attr('class', 'date')
+                  .attr('type', 'text')
+                  .attr('id', baseId)
+                  .datepicker({altField: '#' + baseId + '_alt',
+                               disabled: disabled,
+                               yearRange: minYear + ':' + maxYear})
+                  .datepicker('setDate', initialDate)
+                  .appendTo(span);
+                  
+      if (formId.length > 0)
+      {
+        $('#' + baseId).datepicker('option', 'onSelect', function(dateText, inst) {
+            datepickerSelect(dateText, inst, formId);
+          });
+      }
+      
+      $('.ui-datepicker').draggable();
+      
+    });
+};
+

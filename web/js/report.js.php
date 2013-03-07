@@ -7,68 +7,9 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(0); // Cannot cache file because it depends on $HTTP_REFERER
 
-// Generates the JavaScript code to turn the input with id $id
-// into an autocomplete box, with options contained in the
-// array $options.  $options can be a simple or an associative array.
-function generate_autocomplete($id, $options)
+if ($use_strict)
 {
-  global $autocomplete_length_breaks;
-
-  $js = '';
-
-  // Turn the array into a simple, numerically indexed, array
-  $options = array_values($options);
-  $n_options = count($options);
-  if ($n_options > 0)
-  {
-    // Work out a suitable value for the autocomplete minLength
-    // option, ie the number of characters that must be typed before
-    // a list of options appears.   We want to avoid presenting a huge 
-    // list of options.
-    
-    $min_length = 0;
-    if (isset($autocomplete_length_breaks) && is_array($autocomplete_length_breaks))
-    {
-      foreach ($autocomplete_length_breaks as $break)
-      {
-        if ($n_options < $break)
-        {
-          break;
-        }
-        $min_length++;
-      }
-    }
-    // Start forming the array literal
-    // Escape the options
-    for ($i=0; $i < $n_options; $i++)
-    {
-      $options[$i] = escape_js($options[$i]);
-    }
-    $options_string = "'" . implode("','", $options) . "'";
-    // Build the JavaScript.   We don't support autocomplete in IE6 and below
-    // because the browser doesn't render the autocomplete box properly - it
-    // gets hidden behind other elements.   Although there are fixes for this,
-    // it's not worth it ...
-    $js .= "if (!lteIE6)\n";
-    $js .= "{\n";
-    $js .= "  $('#$id').autocomplete({\n";
-    $js .= "    source: [$options_string],\n";
-    $js .= "    minLength: $min_length\n";
-    $js .= "  })";
-    // If the minLength is 0, then the autocomplete widget doesn't do
-    // quite what you might expect and you need to force it to display
-    // the available options when it receives focus
-    if ($min_length == 0)
-    {
-      $js .= ".focus(function() {\n";
-      $js .= "    $(this).autocomplete('search', '');\n";
-      $js .= "  })";
-    }
-    $js .= "  ;\n";
-    $js .= "}\n";
-  }
-
-  return $js;
+  echo "'use strict';\n";
 }
 
 $user = getUserName();
@@ -101,32 +42,6 @@ init = function(args) {
   
   
   <?php
-  // Make the area match input on the report page into an auto-complete input
-  $options = sql_query_array("SELECT area_name FROM $tbl_area ORDER BY area_name");
-  if ($options !== FALSE)
-  {
-    echo generate_autocomplete('areamatch', $options);
-  }
-
-  // Make the room match input on the report page into an auto-complete input
-  // (We need DISTINCT because it's possible to have two rooms of the same name
-  // in different areas)
-  $options = sql_query_array("SELECT DISTINCT room_name FROM $tbl_room ORDER BY room_name");
-  if ($options !== FALSE)
-  {
-    echo generate_autocomplete('roommatch', $options);
-  }
-    
-  // Make any custom fields for the entry table that have an array of options
-  // into auto-complete inputs
-  foreach ($select_options as $field => $options)
-  {
-    if (strpos($field, 'entry.') == 0)
-    {
-      echo generate_autocomplete('match_' . substr($field, strlen('entry.')), $options);
-    }
-  }
-  
   // We don't support iCal output for the Summary.   So if the Summary button is pressed
   // disable the iCal button and, if iCal output is checked, check another format.  If the
   // Report button is pressed then re-enable the iCal button.
@@ -135,7 +50,7 @@ init = function(args) {
       var output = $(this).filter(':checked').val();
       var formatButtons = $('input[name="output_format"]');
       var icalButton = formatButtons.filter('[value="' + <?php echo OUTPUT_ICAL ?> + '"]');
-      if (output == <?php echo SUMMARY ?>)
+      if (output === '<?php echo SUMMARY ?>')
       {
         icalButton.attr('disabled', 'disabled');
         if (icalButton.is(':checked'))
@@ -152,14 +67,14 @@ init = function(args) {
   <?php
   // Turn the list of users into a dataTable
   ?>
-  var tableOptions = new Object();
+  var tableOptions = {};
   <?php
   // Use an Ajax source if we're able to - gives much better
   // performance for large tables
   if (function_exists('json_encode'))
   {
     list( ,$query_string) = explode('?', $HTTP_REFERER, 2);
-    $ajax_url = "report.php?" . $query_string . "&ajax=1&phase=2";
+    $ajax_url = "report.php?" . (empty($query_string) ? '' : "$query_string&") . "ajax=1&phase=2";
     ?>
     tableOptions.sAjaxSource = "<?php echo $ajax_url ?>";
     <?php
@@ -177,14 +92,13 @@ init = function(args) {
         value: '1'
       }).appendTo('#report_form');
   }
+  
+  var table = $('#report_table');
+  
   <?php 
-  // Stop the first column ("id") from being searchable.   For some reason
-  // using bVisible here does not work, so we will use CSS instead.
-  // Define the type of the start time, end time, duration and last updated columns
-  // (they have the Unix timestamp in the title of a span for sorting)
+  // Get the sTypes and feed those into dataTables
   ?>
-  tableOptions.aoColumnDefs = [{"bSearchable": false, "bVisible": false, "aTargets": [ 0 ]},
-                               {"sType": "title-numeric", "aTargets": [3, 4, 5, -1]}]; 
+  tableOptions.aoColumnDefs = getSTypes(table);
 
   <?php
   // Fix the left hand column.  This has to be done when initialisation is 
@@ -197,8 +111,7 @@ init = function(args) {
       // width.   (Unfortunately the actual column width is just the width of the
       // column on the first page)
       ?>
-      var table = $('#report_table');
-      leftWidth = getFixedColWidth(table, {sWidth: "relative", iWidth: 33});
+      var leftWidth = getFixedColWidth(table, {sWidth: "relative", iWidth: 33});
       var oFC = new FixedColumns(reportTable, {"iLeftColumns": 1,
                                                "iLeftWidth": leftWidth,
                                                "sLeftWidth": "fixed"});
@@ -215,7 +128,7 @@ init = function(args) {
               .click(function() {
                   var aData = reportTable.fnGetFilteredData();
                   var nEntries = aData.length;
-                  if (confirm("<?php echo escape_js(get_vocab('delete_entries_warning')) ?>" +
+                  if (window.confirm("<?php echo escape_js(get_vocab('delete_entries_warning')) ?>" +
                               nEntries.toLocaleString()))
                   {
                     <?php
@@ -230,7 +143,7 @@ init = function(args) {
                     var batch = [];
                     for (var i=0; i<nEntries; i++)
                     {
-                      batch.push(aData[i][0]);
+                      batch.push($(aData[i][0]).data('id'));
                       if (batch.length >= batchSize)
                       {
                         batches.push(batch);
@@ -266,10 +179,10 @@ init = function(args) {
                                     {
                                       if (!isInt.test(results[i]))
                                       {
-                                        alert("<?php echo escape_js(get_vocab('delete_entries_failed')) ?>");
+                                        window.alert("<?php echo escape_js(get_vocab('delete_entries_failed')) ?>");
                                         break;
                                       }
-                                      nDeleted += parseInt(results[i]);
+                                      nDeleted += parseInt(results[i], 10);
                                     }
                                     <?php 
                                     // Reload the page to get the new dataset.   If we're using
@@ -280,7 +193,7 @@ init = function(args) {
                                     var oSettings = reportTable.fnSettings();
                                     if (oSettings.sAjaxSource && 
                                         !oSettings.bServerSide &&
-                                        ($('#div_summary').length == 0))
+                                        ($('#div_summary').length === 0))
                                     {
                                       reportTable.fnReloadAjax();
                                       <?php
@@ -290,7 +203,7 @@ init = function(args) {
                                       // by subtracting the number of entries deleted from theee previous count.
                                       ?>
                                       var span = $('#n_entries');
-                                      span.text(parseInt(span.text()) - nDeleted);
+                                      span.text(parseInt(span.text(), 10) - nDeleted);
                                     }
                                     else
                                     {
@@ -320,4 +233,4 @@ init = function(args) {
 
   var reportTable = makeDataTable('#report_table', tableOptions);
   
-}
+};

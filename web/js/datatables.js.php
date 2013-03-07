@@ -7,7 +7,46 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(60*30); // 30 minute expiry
 
+if ($use_strict)
+{
+  echo "'use strict';\n";
+}
 
+
+// Get the sTypes, which are assumed to be in a data-sType in a <span> in the <th>
+// of the table
+?>
+var getSTypes = function getSTypes(table) {
+    var type,
+        types = {},
+        sTypes = [];
+        
+    table.find('thead tr:first th').each(function(i) {
+       var type = $(this).find('span').data('stype');
+       if (type)
+       {
+         if (types[type] === undefined)
+         {
+           types[type] = [];
+         }
+         types[type].push(i);
+       }
+      });
+
+    for (type in types)
+    {
+      if (types.hasOwnProperty(type))
+      {
+        sTypes.push({sType: type, 
+                     aTargets: types[type]});
+      }
+    }
+    
+    return sTypes;
+  };
+  
+
+<?php
 // Try and get a sensible value for the fixed column width, which is the
 // smaller of the actual column width and either a fixed width or a
 // proportion of the overall table width.
@@ -19,7 +58,7 @@ function getFixedColWidth(table, col)
 {
   var tableWidth = table.outerWidth();
   var leftWidth = table.find('th:first-child').outerWidth();
-  var maxWidthPx = (col.sWidth == "relative") ? tableWidth*col.iWidth/100 : col.iWidth;
+  var maxWidthPx = (col.sWidth === "relative") ? tableWidth*col.iWidth/100 : col.iWidth;
   return Math.min(leftWidth, maxWidthPx);
 }
         
@@ -53,7 +92,7 @@ function makeDataTable(id, specificOptions, leftCol, rightCol)
     ?>
     var winNewWidth = $(window).width();
     var winNewHeight = $(window).height();
-    if ((winNewWidth == winWidth) && (winNewHeight == winHeight))
+    if ((winNewWidth === winWidth) && (winNewHeight === winHeight))
     {
       return;
     }
@@ -93,7 +132,7 @@ function makeDataTable(id, specificOptions, leftCol, rightCol)
         oTable = table.dataTable(mergedOptions);
       }, 200);
             
-  }
+  };
           
   if (lteIE6)
   {
@@ -103,7 +142,7 @@ function makeDataTable(id, specificOptions, leftCol, rightCol)
   else
   {
     var table = $(id);
-    if (table.length == 0)
+    if (table.length === 0)
     {
       return false;
     }
@@ -181,7 +220,7 @@ function makeDataTable(id, specificOptions, leftCol, rightCol)
     // from the column visibility list because it is fixed and (b) stop it
     // being reordered
     ?>
-    var colVisExcludeCols = []
+    var colVisExcludeCols = [];
     if ((leftCol !== undefined) && (leftCol !== null))
     { 
       colVisExcludeCols.push(0);
@@ -189,7 +228,7 @@ function makeDataTable(id, specificOptions, leftCol, rightCol)
     }
     if ((rightCol !== undefined) && (rightCol !== null))
     { 
-      nCols = table.find('tr:first-child th').length;
+      var nCols = table.find('tr:first-child th').length;
       colVisExcludeCols.push(nCols - 1);
       <?php
       // Actually we stop them all from being reordered because at the moment

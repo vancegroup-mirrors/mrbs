@@ -214,7 +214,7 @@ foreach ($fields as $field)
       {
         // We have to use strpos() rather than stripos() because we cannot
         // assume PHP5
-        if (($key != '') && (strpos(strtolower($value), strtolower($search_str)) !== FALSE))
+        if (($key !== '') && (strpos(strtolower($value), strtolower($search_str)) !== FALSE))
         {
           $sql_pred .= " OR E." . $field['name'] . "='" . sql_escape($key) . "'";
         }
@@ -327,9 +327,10 @@ if (!$ajax)
   echo "<table id=\"search_results\" class=\"admin_table display\">\n";
   echo "<thead>\n";
   echo "<tr>\n";
+  // We give some columns an stype data value so that the JavaScript knows how to sort them
   echo "<th>" . get_vocab("namebooker") . "</th>\n";
   echo "<th>" . get_vocab("createdby") . "</th>\n";
-  echo "<th>" . get_vocab("start_date") . "</th>\n";
+  echo "<th><span class=\"normal\" data-stype=\"title-numeric\">" . get_vocab("start_date") . "</span></th>\n";
   echo "<th>" . get_vocab("description") . "</th>\n";
   echo "</tr>\n";
   echo "</thead>\n";

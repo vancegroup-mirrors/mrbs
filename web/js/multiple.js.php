@@ -7,6 +7,11 @@ require "../defaultincludes.inc";
 header("Content-type: application/x-javascript");
 expires_header(60*30); // 30 minute expiry
 
+if ($use_strict)
+{
+  echo "'use strict';\n";
+}
+
 $user = getUserName();
 $is_admin = (authGetUserLevel($user) >= $max_level);
 
@@ -31,13 +36,13 @@ init = function(args) {
           var cell = $(this).closest('td');
           if (cell.hasClass('maximized'))
           {
-            cell.removeClass('maximized')
+            cell.removeClass('maximized');
             cell.addClass('minimized');
           }
           else
           {
-            cell.removeClass('minimized')
+            cell.removeClass('minimized');
             cell.addClass('maximized');
           }
         });
-}
+};
